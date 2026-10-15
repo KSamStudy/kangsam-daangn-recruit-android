@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
 import com.kangsam.daangnrecruit.AppDatabase
 import com.kangsam.daangnrecruit.NotificationLog
+import com.kangsam.daangnrecruit.SampleData
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -117,6 +118,36 @@ fun NotificationLogScreen(refreshTick: Int, onBack: () -> Unit, modifier: Modifi
             }
             Spacer(Modifier.width(8.dp))
             Text(cleanupMessage, style = MaterialTheme.typography.bodySmall)
+        }
+        Spacer(Modifier.height(8.dp))
+
+        // 예시 데이터 (화면 설계의 예시 상황 — 지원자 9명, 송도 · 중등 수학 공고)
+        var sampleMessage by remember { mutableStateOf("") }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = {
+                scope.launch {
+                    sampleMessage = runCatching { SampleData.insert(db) }.fold(
+                        onSuccess = { n -> if (n > 0) "예시 지원자 ${n}명과 공고를 넣었어요" else "예시 데이터가 이미 있어요" },
+                        onFailure = { e -> "예시 데이터 넣기 오류: ${e.message}" },
+                    )
+                }
+            }) {
+                Text("예시 데이터 넣기")
+            }
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(onClick = {
+                scope.launch {
+                    sampleMessage = runCatching { SampleData.delete(db) }.fold(
+                        onSuccess = { n -> "예시 데이터를 지웠어요 (지원자 ${n}명)" },
+                        onFailure = { e -> "예시 데이터 지우기 오류: ${e.message}" },
+                    )
+                }
+            }) {
+                Text("예시 지우기")
+            }
+        }
+        if (sampleMessage.isNotBlank()) {
+            Text(sampleMessage, style = MaterialTheme.typography.bodySmall)
         }
         Spacer(Modifier.height(16.dp))
 

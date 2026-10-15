@@ -52,9 +52,11 @@ class DaangnNotificationListener : NotificationListenerService() {
             .getOrDefault(emptyList())
         if (found.isEmpty()) return
         scope.launch {
-            val dao = AppDatabase.get(applicationContext).applicantDao()
+            val db = AppDatabase.get(applicationContext)
+            val dao = db.applicantDao()
             for (a in found) {
-                runCatching { dao.insert(a) }
+                // 공고명으로 게시물을 찾아 붙이고, 못 찾으면 보류 '공고 못 찾음' (B1)
+                runCatching { dao.insert(ApplyLinker.link(db, a)) }
                     .onSuccess { id -> if (id > 0) Log.i(TAG, "새 지원 저장: ${a.name}") }
                     .onFailure { saveError("지원 저장", it) }
             }
