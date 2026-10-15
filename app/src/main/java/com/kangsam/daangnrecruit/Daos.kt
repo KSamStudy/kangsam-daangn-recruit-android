@@ -121,6 +121,14 @@ interface ApplicantDao {
             "standingPostId = NULL, postingId = NULL WHERE postingId IN (:postingIds) AND status NOT IN (:hold, :merged)"
     )
     suspend fun holdForDeletedPostings(postingIds: List<Long>, hold: String, reason: String, merged: String): Int
+
+    /** 공고명·이름이 같은 지원 건 (화면에서 가져올 때 이미 있는 사람인지 봄) */
+    @Query("SELECT * FROM applicants WHERE postTitle = :title AND name = :name")
+    suspend fun findByTitleAndName(title: String, name: String): List<Applicant>
+
+    /** 개발용: sourceKey가 이 글자로 시작하는 줄을 지움 (화면에서 가져온 지원자 지우기). 지운 줄 수를 돌려줌 */
+    @Query("DELETE FROM applicants WHERE sourceKey LIKE :prefix || '%'")
+    suspend fun deleteBySourcePrefix(prefix: String): Int
 }
 
 @Dao

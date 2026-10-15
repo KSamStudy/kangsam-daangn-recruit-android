@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
 import com.kangsam.daangnrecruit.AppDatabase
+import com.kangsam.daangnrecruit.ApplicantImport
 import com.kangsam.daangnrecruit.NotificationLog
 import com.kangsam.daangnrecruit.PostActions
 import com.kangsam.daangnrecruit.SampleData
@@ -130,7 +131,7 @@ fun NotificationLogScreen(refreshTick: Int, onBack: () -> Unit, modifier: Modifi
             )
         }
         Text(
-            "켜두면 당근에서 내 공고(아래에 '지원자 보기' 버튼이 있는 화면)를 열 때 그 공고를 공고 탭에 넣거나 맞춰요. 읽기만 하고 누르거나 입력하지 않아요. 다른 화면 글자는 저장하지 않아요.",
+            "켜두면 당근에서 내 공고(아래에 '지원자 보기' 버튼이 있는 화면)를 열 때 그 공고를 공고 탭에, '지원자 보기'를 눌러 지원자 목록을 열 때 지원자를 지원자 탭에 넣거나 맞춰요. 읽기만 하고 누르거나 입력하지 않아요. 다른 화면 글자는 저장하지 않아요.",
             style = MaterialTheme.typography.bodySmall
         )
         Text(
@@ -142,13 +143,14 @@ fun NotificationLogScreen(refreshTick: Int, onBack: () -> Unit, modifier: Modifi
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedButton(onClick = {
                 scope.launch {
-                    importMessage = runCatching { PostActions.deleteImported(db) }.fold(
-                        onSuccess = { n -> "가져온 게시물 ${n}개를 지웠어요" },
-                        onFailure = { e -> "지우기 오류: ${e.message}" },
-                    )
+                    importMessage = runCatching {
+                        val people = ApplicantImport.deleteImported(db)
+                        val posts = PostActions.deleteImported(db)
+                        "가져온 게시물 ${posts}개 · 지원자 ${people}명을 지웠어요"
+                    }.getOrElse { e -> "지우기 오류: ${e.message}" }
                 }
             }) {
-                Text("가져온 공고 지우기")
+                Text("가져온 공고·지원자 지우기")
             }
             Spacer(Modifier.width(8.dp))
             Text(importMessage, style = MaterialTheme.typography.bodySmall)

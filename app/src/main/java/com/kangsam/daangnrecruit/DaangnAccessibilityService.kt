@@ -16,8 +16,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
- * 당근 화면을 읽기만 하는 접근성 서비스 (개발 5단계).
- * 지금은 '내 공고' 상세 화면(아래 '지원자 보기' 버튼이 있는 화면)만 읽어서, 그 공고를 공고 탭에 맞춤 (PostActions.importFromScreen).
+ * 당근 화면을 읽기만 하는 접근성 서비스 (개발 5단계). 읽는 화면은 두 개:
+ * - '내 공고' 상세 (아래 '지원자 보기' 버튼이 있는 화면) → 그 공고를 공고 탭에 맞춤 (PostActions.importFromScreen)
+ * - '지원자 목록' (지원자 보기를 누른 화면) → 지원자를 지원자 탭에 맞춤 (ApplicantImport.importFromScreen)
  * 누르기·입력·스크롤 같은 동작은 하지 않고, 다른 화면의 글자는 저장하지 않음.
  * 폰 설정 → 접근성에서 이 앱을 켜고, 앱의 '당근 화면 읽기'도 켰을 때만 동작 (기본 꺼짐).
  */
@@ -51,40 +52,52 @@ class DaangnAccessibilityService : AccessibilityService() {
     }
 
     private fun readScreen() {
-        val post = runCatching { readMyPost() }
+        val screen = runCatching { readDaangnScreen() }
             .onFailure { saveError("화면 읽기", it) }
             .getOrNull() ?: return
 
         // 같은 화면을 1분 안에 다시 읽은 거면 넘어감
         val now = System.currentTimeMillis()
-        val signature = post.toString()
+        val signature = screen.toString()
         if (signature == lastSignature && now - lastReadAt < SAME_SCREEN_MS) return
         lastSignature = signature
         lastReadAt = now
 
         scope.launch {
-            runCatching { PostActions.importFromScreen(AppDatabase.get(applicationContext), post) }
+            runCatching {
+                val db = AppDatabase.get(applicationContext)
+                when (screen) {
+                    is ScreenPost -> PostActions.importFromScreen(db, screen)
+                    is ScreenApplicantList -> ApplicantImport.importFromScreen(db, screen)
+                }
+            }
                 .onSuccess { message ->
                     ScreenRead.saveLast(applicationContext, message)
                     Log.i(TAG, message)
                 }
-                .onFailure { saveError("공고 가져오기", it) }
+                .onFailure { saveError("화면에서 가져오기", it) }
         }
     }
 
-    /** 지금 화면이 당근 '내 공고' 상세면 그 공고, 아니면 null */
-    private fun readMyPost(): ScreenPost? {
+    /** 지금 화면이 읽는 화면(내 공고 상세·지원자 목록)이면 읽은 것, 아니면 null */
+    private fun readDaangnScreen(): DaangnScreen? {
         val root = rootInActiveWindow ?: return null
         if (root.packageName?.toString() != DAANGN) return null
         val nodes = ArrayList<ScreenNode>()
         collect(root, nodes, 0)
-        return MyPostParser.parse(nodes)
+        return MyPostParser.parse(nodes) ?: ApplicantListParser.parse(nodes)
     }
 
     /** 화면을 위에서부터 차례대로 펼침 (부모 먼저) — uiautomator 덤프와 같은 순서 */
     private fun collect(node: AccessibilityNodeInfo, out: MutableList<ScreenNode>, depth: Int) {
         if (depth > MAX_DEPTH || out.size > MAX_NODES) return
-        out.add(ScreenNode(node.className?.toString().orEmpty(), node.text?.toString().orEmpty()))
+        out.add(
+            ScreenNode(
+                node.className?.toString().orEmpty(),
+                node.text?.toString().orEmpty(),
+                node.viewIdResourceName.orEmpty(),
+            )
+        )
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             collect(child, out, depth + 1)

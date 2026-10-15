@@ -6,11 +6,14 @@ package com.kangsam.daangnrecruit
  * 안드로이드 기능을 쓰지 않는 순수 코드라 폰 없이도 시험할 수 있음.
  */
 
-/** 화면의 한 칸: 종류(TextView·Image·Button 등)와 글자. 화면 위에서부터 차례대로 */
-data class ScreenNode(val cls: String, val text: String) {
+/** 화면의 한 칸: 종류(TextView·Image·Button 등), 글자, 화면 안 이름(viewId — 웹뷰는 HTML id). 화면 위에서부터 차례대로 */
+data class ScreenNode(val cls: String, val text: String, val viewId: String = "") {
     val isImage: Boolean get() = cls.substringAfterLast('.').let { it == "Image" || it == "ImageView" }
     val hasText: Boolean get() = text.isNotBlank()
 }
+
+/** 앱이 읽는 당근 화면 종류: 내 공고 상세(ScreenPost), 지원자 목록(ScreenApplicantList) */
+sealed interface DaangnScreen
 
 /** '내 공고' 상세 화면에서 읽은 공고 (화면에 보인 글자 그대로) */
 data class ScreenPost(
@@ -23,7 +26,7 @@ data class ScreenPost(
     val body: String,       // 본문
     val address: String,    // 근무지 (예: 인천광역시 검단구 불로동)
     val applicants: String, // 지원자 수 (예: 지원자 35명 · 지원자 보기 18)
-) {
+) : DaangnScreen {
     /** 구인중이면 올라가 있는 글 */
     val isLive: Boolean get() = status.replace(" ", "") == "구인중"
 
