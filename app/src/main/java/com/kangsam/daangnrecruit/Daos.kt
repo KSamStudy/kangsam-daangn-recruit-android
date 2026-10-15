@@ -129,12 +129,28 @@ interface ApplicantDao {
     /** 개발용: sourceKey가 이 글자로 시작하는 줄을 지움 (화면에서 가져온 지원자 지우기). 지운 줄 수를 돌려줌 */
     @Query("DELETE FROM applicants WHERE sourceKey LIKE :prefix || '%'")
     suspend fun deleteBySourcePrefix(prefix: String): Int
+
+    /** 마지막 대화 시각을 더 늦은 값으로만 고침 */
+    @Query("UPDATE applicants SET lastMessageAt = :time WHERE id = :id AND (lastMessageAt IS NULL OR lastMessageAt < :time)")
+    suspend fun touchLastMessage(id: Long, time: Long)
+
+    /** 예시가 아닌 지원자 (당근 가져오기가 열 채팅방을 고를 때) */
+    @Query("SELECT * FROM applicants WHERE isSample = 0")
+    suspend fun nonSample(): List<Applicant>
 }
 
 @Dao
 interface MessageDao {
     @Insert
     suspend fun insert(message: Message): Long
+
+    /** 같은 메시지 키가 이미 있으면 저장하지 않고 -1 (당근 화면에서 가져온 대화) */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(message: Message): Long
+
+    /** 개발용: 메시지 키가 이 글자로 시작하는 줄을 지움. 지운 줄 수를 돌려줌 */
+    @Query("DELETE FROM messages WHERE messageKey LIKE :prefix || '%'")
+    suspend fun deleteByKeyPrefix(prefix: String): Int
 
     /** 한 지원자의 대화 (오래된 것부터) */
     @Query("SELECT * FROM messages WHERE applicantId = :applicantId ORDER BY time")

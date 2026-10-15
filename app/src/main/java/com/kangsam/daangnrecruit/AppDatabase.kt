@@ -15,7 +15,7 @@ import androidx.room.RoomDatabase
         Account::class, AccountEvent::class, StandingPost::class, Posting::class,
         Applicant::class, Message::class, ErrorLog::class,
     ],
-    version = 2,
+    version = 3, // 10/15 3: 대화 표에 메시지 키 (개발 중이라 표가 바뀌면 지우고 새로 — 가져오기로 다시 채움)
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {

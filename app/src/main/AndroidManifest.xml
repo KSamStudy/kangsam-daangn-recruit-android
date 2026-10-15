@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- 당근 가져오기(프로세스 C)가 당근 앱을 열기 위해: Android 11부터 다른 앱을 찾으려면 여기에 적어야 함 -->
+    <queries>
+        <package android:name="com.towneers.www" />
+    </queries>
+
     <application
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -35,7 +40,8 @@
             </intent-filter>
         </service>
 
-        <!-- 당근 화면 읽기 (폰 설정 → 접근성에서 켜야 동작, 개발 5단계). 당근 화면만 읽고 누르거나 입력하지 않음 -->
+        <!-- 당근 화면 읽기 (폰 설정 → 접근성에서 켜야 동작, 개발 5단계) = 당근 가져오기(프로세스 C, sync 폴더)의 손.
+             당근 화면만 읽고, '당근에서 가져오기' 버튼을 눌렀을 때만 화면을 옮기는 칸을 누름. 입력·전송은 하지 않음 -->
         <service
             android:name=".DaangnAccessibilityService"
             android:exported="false"

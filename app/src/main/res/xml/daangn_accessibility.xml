@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 당근 화면 읽기 (개발 5단계): 당근 앱 화면만 받고, 화면 글자를 읽기만 함. 누르기·입력(제스처)은 쓰지 않음.
-     flagReportViewIds: 웹뷰의 탭 이름(tabs:opened…)으로 지원자 목록에서 고른 탭을 알기 위해 -->
+<!-- 당근 화면 읽기 (개발 5단계): 당근 앱 화면만 받음. 평소에는 화면 글자를 읽기만 하고,
+     설정의 '당근에서 가져오기'를 누르면 화면을 옮기는 칸(나의 당근의 공고·지원자 보기·채팅방·아래 탭)만 누르고 뒤로·스크롤함.
+     손가락 흉내(제스처)와 입력은 쓰지 않음 (canPerformGestures=false).
+     flagReportViewIds: 웹뷰의 탭 이름(tabs:opened…)·채팅방 칸 이름(messagesComposeView 등)으로 화면을 알기 위해 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
     android:accessibilityFeedbackType="feedbackGeneric"

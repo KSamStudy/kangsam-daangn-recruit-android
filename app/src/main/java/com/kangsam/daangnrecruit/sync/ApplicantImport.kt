@@ -1,4 +1,9 @@
-package com.kangsam.daangnrecruit
+package com.kangsam.daangnrecruit.sync
+
+import com.kangsam.daangnrecruit.AppDatabase
+import com.kangsam.daangnrecruit.Applicant
+import com.kangsam.daangnrecruit.ApplicantStatus
+import com.kangsam.daangnrecruit.HoldReason
 
 /**
  * 당근 '지원자 목록' 화면에서 읽은 지원자를 앱 지원자 표에 맞춤 (개발 5단계). 당근에는 아무것도 하지 않음.

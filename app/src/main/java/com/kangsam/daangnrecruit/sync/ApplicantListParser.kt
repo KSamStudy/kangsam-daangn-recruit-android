@@ -1,4 +1,4 @@
-package com.kangsam.daangnrecruit
+package com.kangsam.daangnrecruit.sync
 
 /*
  * 당근 '지원자 목록' 화면 읽기 (개발 5단계, 화면 구조는 10/15 uiautomator 덤프로 확인).

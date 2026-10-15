@@ -32,17 +32,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
 import com.kangsam.daangnrecruit.AppDatabase
-import com.kangsam.daangnrecruit.ApplicantImport
 import com.kangsam.daangnrecruit.NotificationLog
-import com.kangsam.daangnrecruit.PostActions
 import com.kangsam.daangnrecruit.SampleData
-import com.kangsam.daangnrecruit.ScreenRead
+import com.kangsam.daangnrecruit.sync.ApplicantImport
+import com.kangsam.daangnrecruit.sync.ChatImport
+import com.kangsam.daangnrecruit.sync.DaangnSync
+import com.kangsam.daangnrecruit.sync.PostImport
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.launch
 
-/** 설정 > 알림 기록 (개발용): 10/9에 만든 기록 화면을 옮김. 10/15 당근 화면 읽기(개발 5단계) 추가 */
+/** 설정 > 알림 기록 (개발용): 10/9에 만든 기록 화면을 옮김. 10/15 당근 가져오기(프로세스 C)의 개발용 칸 추가 */
 @Composable
 fun NotificationLogScreen(refreshTick: Int, onBack: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -64,12 +65,12 @@ fun NotificationLogScreen(refreshTick: Int, onBack: () -> Unit, modifier: Modifi
         entries = NotificationLog.readRecent(context)
     }
 
-    // 당근 화면 읽기: 폰 설정의 접근성 + 앱의 '당근 화면 읽기' 둘 다 켜져야 동작
-    val screenServiceOn = remember(refreshTick) { ScreenRead.isServiceOn(context) }
-    var screenReadOn by remember { mutableStateOf(ScreenRead.isEnabled(context)) }
-    var lastRead by remember { mutableStateOf(ScreenRead.last(context)) }
+    // 당근 가져오기(프로세스 C): 폰 설정의 접근성 + 이 기능 스위치 둘 다 켜져야 동작 (스위치는 설정 탭에도 있음)
+    val screenServiceOn = remember(refreshTick) { DaangnSync.isServiceOn(context) }
+    var screenReadOn by remember(refreshTick) { mutableStateOf(DaangnSync.isOn(context)) }
+    var lastRead by remember { mutableStateOf(DaangnSync.last(context)) }
     LaunchedEffect(refreshTick) {
-        lastRead = ScreenRead.last(context)
+        lastRead = DaangnSync.last(context)
     }
 
     val timeFormat = remember { SimpleDateFormat("MM/dd HH:mm:ss", Locale.KOREA) }
@@ -109,7 +110,7 @@ fun NotificationLogScreen(refreshTick: Int, onBack: () -> Unit, modifier: Modifi
         )
         Spacer(Modifier.height(16.dp))
 
-        // 3) 당근 화면 읽기 (개발 5단계) — '내 공고' 화면에서 공고 가져오기
+        // 3) 당근 가져오기 (프로세스 C) — 개발용 칸
         Text(if (screenServiceOn) "접근성 (당근 화면 읽기): 켜짐" else "접근성 (당근 화면 읽기): 꺼져 있음")
         if (!screenServiceOn) {
             Spacer(Modifier.height(8.dp))
@@ -121,17 +122,17 @@ fun NotificationLogScreen(refreshTick: Int, onBack: () -> Unit, modifier: Modifi
             Text("운영폰 설정을 바꾸는 거라 담당자 OK 뒤에 켜요", style = MaterialTheme.typography.labelSmall)
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("당근 화면 읽기", modifier = Modifier.weight(1f))
+            Text("당근 가져오기", modifier = Modifier.weight(1f))
             Switch(
                 checked = screenReadOn,
                 onCheckedChange = { checked ->
                     screenReadOn = checked
-                    ScreenRead.setEnabled(context, checked)
+                    DaangnSync.setOn(context, checked)
                 }
             )
         }
         Text(
-            "켜두면 당근에서 내 공고(아래에 '지원자 보기' 버튼이 있는 화면)를 열 때 그 공고를 공고 탭에, '지원자 보기'를 눌러 지원자 목록을 열 때 지원자를 지원자 탭에 넣거나 맞춰요. 읽기만 하고 누르거나 입력하지 않아요. 다른 화면 글자는 저장하지 않아요.",
+            "켜두면 당근에서 내 공고 상세·지원자 목록·채팅방을 열 때 그 내용을 공고·지원자·대화에 맞춰요. 화면을 옮겨 다니며 한 번에 가져오는 건 설정 탭의 '당근에서 가져오기'예요. 다른 화면 글자는 저장하지 않아요.",
             style = MaterialTheme.typography.bodySmall
         )
         Text(
@@ -144,13 +145,14 @@ fun NotificationLogScreen(refreshTick: Int, onBack: () -> Unit, modifier: Modifi
             OutlinedButton(onClick = {
                 scope.launch {
                     importMessage = runCatching {
+                        val talks = ChatImport.deleteImported(db)
                         val people = ApplicantImport.deleteImported(db)
-                        val posts = PostActions.deleteImported(db)
-                        "가져온 게시물 ${posts}개 · 지원자 ${people}명을 지웠어요"
+                        val posts = PostImport.deleteImported(db)
+                        "가져온 게시물 ${posts}개 · 지원자 ${people}명 · 대화 ${talks}개를 지웠어요"
                     }.getOrElse { e -> "지우기 오류: ${e.message}" }
                 }
             }) {
-                Text("가져온 공고·지원자 지우기")
+                Text("가져온 공고·지원자·대화 지우기")
             }
             Spacer(Modifier.width(8.dp))
             Text(importMessage, style = MaterialTheme.typography.bodySmall)
@@ -216,7 +218,7 @@ fun NotificationLogScreen(refreshTick: Int, onBack: () -> Unit, modifier: Modifi
             Text("최근 기록 ${entries.size}건", modifier = Modifier.weight(1f))
             TextButton(onClick = {
                 entries = NotificationLog.readRecent(context)
-                lastRead = ScreenRead.last(context)
+                lastRead = DaangnSync.last(context)
             }) {
                 Text("새로고침")
             }

@@ -127,7 +127,10 @@ data class Applicant(
 )
 
 /** 6. 대화 (오간 메시지 1개 = 한 줄) */
-@Entity(tableName = "messages", indices = [Index("applicantId")])
+@Entity(
+    tableName = "messages",
+    indices = [Index("applicantId"), Index(value = ["messageKey"], unique = true)],
+)
 data class Message(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val time: Long,                     // 시각
@@ -137,6 +140,7 @@ data class Message(
     val content: String,                // 내용 (원문 그대로)
     val sendMethod: String = "",        // 보낸 방법 (우리일 때): 앱 자동 / 직접 보냄 / 결과 불명
     val appHandling: String = "",       // 앱 처리 (지원자일 때): 답함 / 기다림 / 넘김. 비어 있으면 처리 전
+    val messageKey: String? = null,     // 메시지 키 (같은 메시지를 두 번 저장하지 않으려고 — 당근 화면에서 가져온 것은 지원자·시각·보낸 쪽·내용으로 만듦)
     val isSample: Boolean = false,
 )
 

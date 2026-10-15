@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">Kangsam Daangn Recruit</string>
     <string name="accessibility_label">당근 화면 읽기 (Kangsam)</string>
-    <string name="accessibility_description">당근 \'내 공고\'와 \'지원자 목록\' 화면을 읽어서, 올려 둔 공고와 지원자를 앱으로 가져와요. 당근 화면만 읽고, 누르거나 입력하지 않아요. 앱 설정의 \'당근 화면 읽기\'를 켰을 때만 동작해요.</string>
+    <string name="accessibility_description">당근의 내 공고·지원자 목록·채팅방 화면을 읽어서 공고·지원자·대화를 앱으로 가져와요. 앱 설정의 \'당근 가져오기\'를 켰을 때만 동작해요. \'당근에서 가져오기\' 버튼을 누르면 화면을 옮기는 칸(공고·지원자 보기·채팅방·아래 탭)만 누르고, 입력하거나 보내지 않아요. 도는 동안에는 화면 아래에 \'가져오는 중\' 띠가 떠요.</string>
 </resources>

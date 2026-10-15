@@ -1,4 +1,4 @@
-package com.kangsam.daangnrecruit
+package com.kangsam.daangnrecruit.sync
 
 /*
  * 당근 '내 공고' 상세 화면 읽기 (개발 5단계).
