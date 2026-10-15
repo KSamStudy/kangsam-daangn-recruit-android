@@ -2,22 +2,36 @@ package com.kangsam.daangnrecruit.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.kangsam.daangnrecruit.AppDatabase
+import com.kangsam.daangnrecruit.Applicant
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
-// 탭별 화면. 지금은 뼈대만 있고, 3단계에서 시안대로 채움 (화면 설계 '화면별 기능')
+// 탭별 화면. 지원자 탭은 1차(지원 감지·기록) 목록만 먼저 넣고, 나머지는 회의 뒤에 시안대로 채움 (화면 설계 '화면별 기능')
 
 @Composable
 fun HomeScreen(modifier: Modifier = Modifier) {
@@ -30,12 +44,52 @@ fun HomeScreen(modifier: Modifier = Modifier) {
 
 @Composable
 fun ApplicantsScreen(modifier: Modifier = Modifier) {
-    PlaceholderScreen(
-        title = "지원자",
-        description = "지원자 목록과 당근 응대·문자 응대 켜기·끄기",
-        modifier = modifier
-    )
+    // 폰 안 DB의 지원자 목록. DB가 바뀌면 자동으로 다시 그림
+    val context = LocalContext.current
+    val applicants by remember { AppDatabase.get(context).applicantDao().observeAll() }
+        .collectAsState(initial = emptyList())
+
+    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
+        Text("지원자", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "지원 알림으로 감지한 지원자 ${applicants.size}명 (당근 응대·문자 응대 켜기·끄기는 나중에)",
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Spacer(Modifier.height(16.dp))
+        if (applicants.isEmpty()) {
+            Text(
+                "아직 없음 — 설정 → 알림 기록 (개발용)에서 기록이 켜져 있어야 감지해요",
+                style = MaterialTheme.typography.labelMedium
+            )
+        } else {
+            LazyColumn {
+                items(applicants, key = { it.id }) { a ->
+                    ApplicantRow(a)
+                    HorizontalDivider()
+                }
+            }
+        }
+    }
 }
+
+/** 지원자 목록 한 줄: 이름·상태, 공고명, 지원 시각 */
+@Composable
+private fun ApplicantRow(a: Applicant) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(a.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Text(a.status, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        }
+        Text(
+            a.postTitle.ifBlank { "공고명 없음 (알림에 안 옴)" },
+            style = MaterialTheme.typography.bodySmall
+        )
+        Text(TIME_FORMAT.format(Date(a.appliedAt)), style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+private val TIME_FORMAT = SimpleDateFormat("M/d HH:mm", Locale.KOREA)
 
 @Composable
 fun PostsScreen(modifier: Modifier = Modifier) {
