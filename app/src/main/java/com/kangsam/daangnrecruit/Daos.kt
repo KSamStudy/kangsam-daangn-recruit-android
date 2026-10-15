@@ -65,6 +65,19 @@ interface PostDao {
     /** 공고명이 같은 게시물 (공고명 규칙으로 지원을 붙일 때) */
     @Query("SELECT * FROM postings WHERE title = :title")
     suspend fun findByTitle(title: String): List<Posting>
+
+    /** 사유가 이 글자로 시작하는 게시물 (개발용: '내 공고' 화면에서 가져온 것 찾기) */
+    @Query("SELECT * FROM postings WHERE reason LIKE :prefix || '%'")
+    suspend fun postingsWithReasonPrefix(prefix: String): List<Posting>
+
+    @Query("UPDATE standing_posts SET currentPostingId = NULL WHERE currentPostingId IN (:postingIds)")
+    suspend fun clearCurrentPosting(postingIds: List<Long>)
+
+    @Query("DELETE FROM postings WHERE id IN (:ids)")
+    suspend fun deletePostingsById(ids: List<Long>): Int
+
+    @Query("DELETE FROM standing_posts WHERE id IN (:ids)")
+    suspend fun deleteStandingPostsById(ids: List<Long>): Int
 }
 
 @Dao
@@ -101,6 +114,13 @@ interface ApplicantDao {
     /** 개발용: 테스트 알림(adb)으로 들어간 줄을 지움. 지운 줄 수를 돌려줌 */
     @Query("DELETE FROM applicants WHERE sourceKey LIKE 'com.android.shell|%' OR rawText LIKE '테스트%'")
     suspend fun deleteTestRows(): Int
+
+    /** 개발용: 지운 게시물에 붙어 있던 지원자를 다시 보류로 (다시 가져오면 다시 붙음). 이미 보류·합침인 줄은 그대로 */
+    @Query(
+        "UPDATE applicants SET statusBeforeHold = status, status = :hold, reason = :reason, " +
+            "standingPostId = NULL, postingId = NULL WHERE postingId IN (:postingIds) AND status NOT IN (:hold, :merged)"
+    )
+    suspend fun holdForDeletedPostings(postingIds: List<Long>, hold: String, reason: String, merged: String): Int
 }
 
 @Dao
