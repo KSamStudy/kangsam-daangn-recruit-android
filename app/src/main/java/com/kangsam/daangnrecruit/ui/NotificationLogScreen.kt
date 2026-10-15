@@ -8,29 +8,35 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
+import com.kangsam.daangnrecruit.AppDatabase
 import com.kangsam.daangnrecruit.NotificationLog
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 /** 설정 > 알림 기록 (개발용): 10/9에 만든 기록 화면을 옮김 */
 @Composable
@@ -83,12 +89,38 @@ fun NotificationLogScreen(refreshTick: Int, onBack: () -> Unit, modifier: Modifi
             )
         }
         Text(
-            "켜두면 당근·다중 계정 앱 알림만 이 폰 안에 기록해요. 알림을 지우거나 누르지 않아요.",
+            "켜두면 당근 알림만 이 폰 안에 기록하고, 지원 알림이면 지원자 탭에 넣어요. 끄면 둘 다 멈춰요. 알림을 지우거나 누르지 않아요.",
             style = MaterialTheme.typography.bodySmall
         )
         Spacer(Modifier.height(16.dp))
 
-        // 3) 최근 기록 목록
+        // 3) 오류 기록·테스트 정리 (개발용)
+        val db = remember { AppDatabase.get(context) }
+        val errors by remember { db.errorLogDao().observeRecent() }.collectAsState(initial = emptyList())
+        val scope = rememberCoroutineScope()
+        var cleanupMessage by remember { mutableStateOf("") }
+        Text(
+            "오류 기록 ${errors.size}건" + (errors.firstOrNull()?.let {
+                " · 최근: ${timeFormat.format(Date(it.time))} ${it.place} — ${it.message}"
+            } ?: ""),
+            style = MaterialTheme.typography.bodySmall
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = {
+                scope.launch {
+                    val n = db.applicantDao().deleteTestRows()
+                    cleanupMessage = "테스트 지원자 ${n}명 지움"
+                }
+            }) {
+                Text("테스트 지원자 지우기")
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(cleanupMessage, style = MaterialTheme.typography.bodySmall)
+        }
+        Spacer(Modifier.height(16.dp))
+
+        // 4) 최근 기록 목록
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("최근 기록 ${entries.size}건", modifier = Modifier.weight(1f))
             TextButton(onClick = { entries = NotificationLog.readRecent(context) }) {

@@ -6,8 +6,11 @@ import androidx.core.app.NotificationCompat
 
 /**
  * 당근 알림 가운데 지원 알림을 골라 지원자 줄(상태 '새 지원')로 바꾸는 곳 (사용자 프로세스 B1).
- * 지원은 '당근알바' 공식 채팅방에 '○○님이 지원했어요…' 메시지로 옴 (10/15 채팅 목록에서 확인).
- * 실제 지원 알림 기록을 보고 규칙을 다듬을 것 (공고명이 어디에 오는지 등).
+ * 지원은 '당근알바' 공식 채팅방에 이런 메시지로 옴 (10/15 채팅방 화면에서 확인):
+ *   ○○님이 지원했어요
+ *   ■ 공고명: 중2 공부 도와주실분!!
+ *   [지원서 확인하기] [지원자 목록으로 이동]
+ * 실제 알림(푸시)에 둘째 줄(공고명)까지 오는지는 다음 지원 때 기록 파일로 확인.
  */
 object ApplyDetector {
     /** 지원 알림을 보내는 쪽 이름 */
@@ -35,7 +38,7 @@ object ApplyDetector {
                 val sender = m.person?.name?.toString() ?: ""
                 val text = m.text?.toString() ?: return@mapNotNull null
                 if (!fromDaangnAlba(sender, title, conversation)) return@mapNotNull null
-                toApplicant(text, m.timestamp, "msg|${m.timestamp}|$text")
+                toApplicant(text, m.timestamp, "${sbn.packageName}|msg|${m.timestamp}|$text")
             }
         }
 
@@ -45,7 +48,7 @@ object ApplyDetector {
             ?: extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
             ?: return emptyList()
         val time = if (n.`when` > 0) n.`when` else sbn.postTime
-        return listOfNotNull(toApplicant(text, time, "n|$time|$text"))
+        return listOfNotNull(toApplicant(text, time, "${sbn.packageName}|n|$time|$text"))
     }
 
     private fun fromDaangnAlba(sender: String, title: String, conversation: String): Boolean =

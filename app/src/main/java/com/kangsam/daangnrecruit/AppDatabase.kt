@@ -49,6 +49,10 @@ interface ApplicantDao {
     /** 지원자 목록 (최근 지원이 위로). DB가 바뀌면 화면이 자동으로 다시 그려짐 */
     @Query("SELECT * FROM applicants ORDER BY appliedAt DESC")
     fun observeAll(): Flow<List<Applicant>>
+
+    /** 개발용: 테스트 알림(adb)으로 들어간 줄을 지움. 지운 줄 수를 돌려줌 */
+    @Query("DELETE FROM applicants WHERE sourceKey LIKE 'com.android.shell|%' OR rawText LIKE '테스트%'")
+    suspend fun deleteTestRows(): Int
 }
 
 @Dao

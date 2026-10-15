@@ -79,7 +79,12 @@ private fun ApplicantRow(a: Applicant) {
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(a.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            Text(a.status, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            val isTest = a.sourceKey.startsWith("com.android.shell|") || a.rawText.startsWith("테스트")
+            Text(
+                if (isTest) "${a.status} · 테스트" else a.status,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
         }
         Text(
             a.postTitle.ifBlank { "공고명 없음 (알림에 안 옴)" },
