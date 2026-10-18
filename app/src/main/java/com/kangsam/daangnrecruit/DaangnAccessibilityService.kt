@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -20,6 +21,8 @@ import com.kangsam.daangnrecruit.sync.ScreenImport
 import com.kangsam.daangnrecruit.sync.Snapshot
 import com.kangsam.daangnrecruit.sync.SyncRunner
 import com.kangsam.daangnrecruit.sync.UiNode
+import com.kangsam.daangnrecruit.sync.UiTree
+import java.io.File
 import java.time.ZoneId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -156,6 +159,9 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
     // ---------- ScreenDriver: 가져오기가 쓰는 손
 
     override fun current(): Snapshot? {
+        // 가져오는 동안에는 접근성 칸 기억(캐시)을 비우고 매번 새로 읽음: 화면이 한꺼번에 바뀔 때 '바뀜' 알림 일부가 빠지면
+        // 옛 칸이 남아 새로 뜬 내용을 못 볼 수 있어서 (10/18 채팅 목록 의심 원인 중 하나). 안드로이드 13부터 됨
+        if (DaangnSync.running && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) clearCache()
         val root = rootInActiveWindow ?: return null
         if (root.packageName?.toString() != DAANGN) return null
         return snapshotOf(root)
@@ -197,6 +203,38 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
     override suspend fun pause(ms: Long) = delay(ms)
 
     override fun clock(): Long = SystemClock.uptimeMillis()
+
+    /**
+     * 개발용: 앱이 본 화면을 앱 전용 폴더(files/debug/이름.xml)에 uiautomator 덤프 모양으로 남김 (덮어씀).
+     * 칸마다 누르기·스크롤 동작 목록(actions)도 적음. 맥으로 옮기기:
+     * adb exec-out run-as com.kangsam.daangnrecruit cat files/debug/이름.xml > ~/Desktop/이름.xml
+     */
+    override fun saveScreen(s: Snapshot, name: String) {
+        val refs = refs(s)
+        val xml = UiTree.toXml(s.nodes) { i ->
+            val actions = refs.getOrNull(i)?.actionList.orEmpty().mapNotNull { actionName(it.id) }
+            if (actions.isEmpty()) emptyMap() else mapOf("actions" to actions.joinToString(" "))
+        }
+        ioScope.launch {
+            runCatching {
+                val dir = File(filesDir, "debug").apply { mkdirs() }
+                File(dir, "$name.xml").writeText(xml)
+            }.onFailure { saveError("화면 저장 (개발용)", it) }
+        }
+    }
+
+    /** 화면 저장에 적을 동작 이름 (누르기·스크롤만) */
+    private fun actionName(id: Int): String? = when (id) {
+        AccessibilityNodeInfo.ACTION_CLICK -> "click"
+        AccessibilityNodeInfo.ACTION_LONG_CLICK -> "longClick"
+        AccessibilityNodeInfo.ACTION_SCROLL_FORWARD -> "forward"
+        AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD -> "backward"
+        AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP.id -> "up"
+        AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.id -> "down"
+        AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT.id -> "left"
+        AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.id -> "right"
+        else -> null
+    }
 
     @Suppress("UNCHECKED_CAST")
     private fun refs(s: Snapshot): List<AccessibilityNodeInfo> = s.handle as? List<AccessibilityNodeInfo> ?: emptyList()

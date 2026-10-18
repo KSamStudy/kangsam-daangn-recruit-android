@@ -60,4 +60,72 @@ object UiTree {
 
     /** 공고·지원자 화면 읽기(MyPostParser·ApplicantListParser)에 넘기는 모양으로 */
     fun toScreenNodes(nodes: List<UiNode>): List<ScreenNode> = nodes.map { ScreenNode(it.cls, it.text, it.viewId) }
+
+    /** 개발용: 화면 모양을 칸 수로만 (이름·글자는 안 넣음) — 실행 기록에 남겨 앱이 본 화면이 덤프와 같은지 봄 */
+    fun shape(nodes: List<UiNode>): String =
+        "칸 ${nodes.size} · 누를 칸 ${nodes.count { it.clickable }} · 길게 누를 칸 ${nodes.count { it.longClickable }} · " +
+            "스크롤 칸 ${nodes.count { it.scrollable }} · 글자 칸 ${nodes.count { it.text.isNotBlank() }}"
+
+    /**
+     * 개발용: 앱이 본 화면을 uiautomator 덤프와 같은 모양의 XML로 (시험 도구가 덤프처럼 그대로 다시 읽음).
+     * extra = 칸마다 더 적을 값 (폰에서는 접근성 동작 목록)
+     */
+    fun toXml(nodes: List<UiNode>, extra: (Int) -> Map<String, String> = { emptyMap() }): String {
+        val sb = StringBuilder("<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>\n<hierarchy rotation=\"0\">\n")
+        val openDepths = mutableListOf<Int>() // 아직 안 닫은 칸들의 깊이
+        val childCounts = mutableListOf<Int>() // 그 칸들의 지금까지 아이 수 (index 값)
+        var roots = 0
+        fun attr(name: String, value: String) {
+            sb.append(' ').append(name).append("=\"").append(escape(value)).append('"')
+        }
+        for ((i, n) in nodes.withIndex()) {
+            while (openDepths.isNotEmpty() && openDepths[openDepths.size - 1] >= n.depth) {
+                sb.append("</node>")
+                openDepths.removeAt(openDepths.size - 1)
+                childCounts.removeAt(childCounts.size - 1)
+            }
+            val index = if (childCounts.isEmpty()) {
+                roots++
+            } else {
+                val last = childCounts.size - 1
+                childCounts[last].also { childCounts[last] = it + 1 }
+            }
+            sb.append("<node index=\"").append(index).append('"')
+            attr("text", n.text)
+            attr("resource-id", n.viewId)
+            attr("class", n.cls)
+            attr("content-desc", n.desc)
+            attr("clickable", n.clickable.toString())
+            attr("long-clickable", n.longClickable.toString())
+            attr("scrollable", n.scrollable.toString())
+            attr("selected", n.selected.toString())
+            attr("bounds", "[${n.left},${n.top}][${n.right},${n.bottom}]")
+            for ((k, v) in extra(i)) attr(k, v)
+            sb.append('>')
+            openDepths.add(n.depth)
+            childCounts.add(0)
+        }
+        repeat(openDepths.size) { sb.append("</node>") }
+        sb.append("\n</hierarchy>\n")
+        return sb.toString()
+    }
+
+    /** XML 글자값으로 (줄바꿈은 그대로 남게, XML에 못 쓰는 글자는 ?로 — uiautomator와 같음) */
+    private fun escape(s: String): String {
+        val sb = StringBuilder(s.length)
+        for (c in s) {
+            when {
+                c == '&' -> sb.append("&amp;")
+                c == '<' -> sb.append("&lt;")
+                c == '>' -> sb.append("&gt;")
+                c == '"' -> sb.append("&quot;")
+                c == '\n' -> sb.append("&#10;")
+                c == '\r' -> sb.append("&#13;")
+                c == '\t' -> sb.append("&#9;")
+                c < ' ' || c == '￾' || c == '￿' -> sb.append('?')
+                else -> sb.append(c)
+            }
+        }
+        return sb.toString()
+    }
 }

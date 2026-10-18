@@ -28,4 +28,10 @@ interface ScreenDriver {
 
     /** 지금 시각 (ms) — 기다린 시간 계산용 */
     fun clock(): Long
+
+    /**
+     * 개발용: 앱이 본 화면을 폰 안(앱 전용 폴더)에 남김 — 화면이 덤프와 다르게 보일 때 원인을 보려고.
+     * 이름 하나에 파일 하나(덮어씀). 기본은 아무것도 안 함
+     */
+    fun saveScreen(s: Snapshot, name: String) {}
 }

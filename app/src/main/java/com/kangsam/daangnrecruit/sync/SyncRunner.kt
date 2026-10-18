@@ -15,6 +15,9 @@ import kotlin.random.Random
  * 안전장치: 누를 칸은 DaangnNav가 고르고 isSafeToClick으로 한 번 더 봄(글쓰기·전송·마감·수정·상태·광고·추천·근무확정·당근페이 막음),
  * 누르기 전 사람처럼 1.2~2.8초 쉼, 한 번에 누르는 횟수 한도, 기다리던 화면이 안 뜨거나 당근을 벗어나거나
  * 보안 인증·이용 제한 글자가 보이면 바로 멈춤, 안 읽은 채팅방은 건너뜀
+ *
+ * 개발용: 화면이 덤프와 다르게 보이면(채팅 줄을 못 찾음·앱에 있는 이름이 없음·방 위쪽을 못 읽음·멈춤) 그때 화면을
+ * 폰 안 앱 전용 폴더(files/debug)에 남김 — 지원자 이름·메시지가 들어 있어 폰 밖으로는 맥 바탕화면·채팅에만
  */
 class SyncRunner(
     private val driver: ScreenDriver,
@@ -41,6 +44,7 @@ class SyncRunner(
             "끝 — " + results.joinToString(" / ")
         } catch (e: Stop) {
             note("멈춤: ${e.message}")
+            keepScreen("stopped")
             "멈춤: ${e.message}" + (if (results.isNotEmpty()) " (그 전까지: ${results.joinToString(" / ")})" else "")
         }
         driver.openApp()
@@ -107,14 +111,23 @@ class SyncRunner(
         }
         // 채팅 줄은 화면 틀보다 늦게 뜰 수 있음 → 지원자 방 줄이 보일 때까지 잠깐 기다림
         var s = loaded(DaangnPage.CHAT_LIST) { DaangnNav.chatRows(it.nodes).isNotEmpty() }
+        if (DaangnNav.chatRows(s.nodes).isEmpty()) {
+            // 10/18 폰: 덤프(uiautomator)에는 지원자 방 줄이 있는데 앱은 하나도 못 봄 → 앱이 본 화면을 남겨 원인을 봄
+            keepScreen("chat_list", s)
+            results.add("채팅 목록에서 방 줄을 못 찾아 채팅은 건너뜀")
+            return
+        }
+        val first = s
         // 목록 맨 위부터
         for (i in 0 until 5) s = scrollMoved(up = true, DaangnPage.CHAT_LIST, { DaangnNav.chatListScroller(it) }, ::rowKeys) ?: break
-        val done = mutableSetOf<String>()
+        val seen = mutableSetOf<String>() // 목록에서 본 지원자 방 (이름|동네)
+        val done = mutableSetOf<String>() // 그중 앱에 있는 사람의 방
         var rooms = 0
         var unread = 0
         for (page in 0 until MAX_LIST_PAGES) {
             for (row in DaangnNav.chatRows(s.nodes)) {
                 val key = "${row.name}|${row.area}"
+                seen += key
                 if (row.name !in names || key in done) continue
                 done += key
                 if (row.unread) {
@@ -142,12 +155,21 @@ class SyncRunner(
             if (rooms >= MAX_ROOMS) break
             s = scrollMoved(up = false, DaangnPage.CHAT_LIST, { DaangnNav.chatListScroller(it) }, ::rowKeys) ?: break
         }
-        results.add("채팅방 ${rooms}개 읽음" + (if (unread > 0) " · 안 읽은 방 ${unread}개 건너뜀" else ""))
+        // 방 줄은 보이는데 앱에 있는 이름이 하나도 없으면 이름 모양을 보려고 남김
+        if (done.isEmpty()) keepScreen("chat_list", first)
+        results.add(
+            "채팅방 ${rooms}개 읽음" + (if (unread > 0) " · 안 읽은 방 ${unread}개 건너뜀" else "") +
+                " (목록에서 본 방 ${seen.size}개 · 그중 앱에 있는 지원자 ${done.size}명)"
+        )
     }
 
     /** 채팅방 하나: 맨 아래(최근)부터 위로 올려 가며 이어 붙인 뒤 저장 */
     private suspend fun readRoom(first: Snapshot): String {
-        val header = ChatRoomParser.header(first.nodes) ?: return "채팅방 위쪽을 못 읽음"
+        val header = ChatRoomParser.header(first.nodes)
+        if (header == null) {
+            keepScreen("chat_room", first)
+            return "채팅방 위쪽을 못 읽음"
+        }
         if (db.applicantDao().findByTitleAndName(header.postTitle, header.name).isEmpty()) {
             return "'${header.name}' 방 — '${header.postTitle}' 지원자가 앱에 없어 건너뜀"
         }
@@ -261,6 +283,16 @@ class SyncRunner(
     }
 
     private fun rowKeys(s: Snapshot) = DaangnNav.chatRows(s.nodes).map { "${it.name}|${it.area}" }
+
+    /**
+     * 개발용: 앱이 본 화면을 폰 안(앱 전용 폴더 files/debug/이름.xml)에 남기고 기록에 칸 수를 적음.
+     * 화면이 덤프와 다르게 보일 때 원인을 보려고. 실패해도 가져오기는 그대로
+     */
+    private fun keepScreen(name: String, s: Snapshot? = null) {
+        val shot = s ?: runCatching { driver.current() }.getOrNull() ?: return
+        runCatching { driver.saveScreen(shot, name) }
+        note("화면 저장 (개발용): $name.xml — ${UiTree.shape(shot.nodes)}")
+    }
 
     private fun note(line: String) {
         log.add(line)
