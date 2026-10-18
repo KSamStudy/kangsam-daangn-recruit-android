@@ -134,9 +134,13 @@ interface ApplicantDao {
     @Query("UPDATE applicants SET lastMessageAt = :time WHERE id = :id AND (lastMessageAt IS NULL OR lastMessageAt < :time)")
     suspend fun touchLastMessage(id: Long, time: Long)
 
-    /** 예시가 아닌 지원자 (당근 가져오기가 열 채팅방을 고를 때) */
+    /** 예시가 아닌 지원자 (당근 가져오기가 열 채팅방을 고를 때, 알림으로 온 메시지를 붙일 때) */
     @Query("SELECT * FROM applicants WHERE isSample = 0")
     suspend fun nonSample(): List<Applicant>
+
+    /** 개발용: 예시 지원자 (adb 테스트 알림으로 온 메시지는 예시에만 붙임) */
+    @Query("SELECT * FROM applicants WHERE isSample = 1")
+    suspend fun samples(): List<Applicant>
 }
 
 @Dao
@@ -144,9 +148,26 @@ interface MessageDao {
     @Insert
     suspend fun insert(message: Message): Long
 
-    /** 같은 메시지 키가 이미 있으면 저장하지 않고 -1 (당근 화면에서 가져온 대화) */
+    /** 같은 메시지 키가 이미 있으면 저장하지 않고 -1 (당근 화면·알림에서 가져온 대화) */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIgnore(message: Message): Long
+
+    @Update
+    suspend fun update(message: Message)
+
+    /** 이 메시지 키가 있는 줄 수 (0이면 없음) */
+    @Query("SELECT COUNT(*) FROM messages WHERE messageKey = :key")
+    suspend fun countByKey(key: String): Int
+
+    /**
+     * 같은 지원자·보낸 쪽·내용이고 시각이 fromTime~toTime 사이이며 메시지 키가 prefix로 시작하는 줄 —
+     * 알림과 화면에서 각각 들어온 같은 메시지를 찾을 때 (ChatNotify·ChatImport)
+     */
+    @Query(
+        "SELECT * FROM messages WHERE applicantId = :applicantId AND sender = :sender AND content = :content " +
+            "AND time BETWEEN :fromTime AND :toTime AND messageKey LIKE :prefix || '%' ORDER BY time"
+    )
+    suspend fun findSame(applicantId: Long, sender: String, content: String, fromTime: Long, toTime: Long, prefix: String): List<Message>
 
     /** 개발용: 메시지 키가 이 글자로 시작하는 줄을 지움. 지운 줄 수를 돌려줌 */
     @Query("DELETE FROM messages WHERE messageKey LIKE :prefix || '%'")

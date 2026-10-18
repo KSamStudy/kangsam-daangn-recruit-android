@@ -117,7 +117,8 @@ private fun DaangnSyncSection(refreshTick: Int) {
     ) { Text("당근에서 가져오기") }
     Text(
         "당근을 열고 나의 당근 → 공고 → 지원자 보기 → 채팅 탭 → 지원자 방을 차례로 열어요. " +
-            "누르는 건 화면을 옮기는 버튼뿐이고, 안 읽은 채팅방은 건너뛰어요. 화면 아래에 '가져오는 중' 띠가 떠 있는 동안 폰을 만지지 마세요 (멈추려면 홈 버튼).",
+            "누르는 건 화면을 옮기는 버튼뿐이고, 안 읽은 채팅방은 열지 않아요 (지원자가 새로 보내는 메시지는 알림으로 받아 대화에 남겨요). " +
+                "화면 아래에 '가져오는 중' 띠가 떠 있는 동안 폰을 만지지 마세요 (멈추려면 홈 버튼).",
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )

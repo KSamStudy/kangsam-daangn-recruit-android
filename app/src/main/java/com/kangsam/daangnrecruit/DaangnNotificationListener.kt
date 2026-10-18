@@ -6,6 +6,10 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.kangsam.daangnrecruit.sync.ChatNotify
+import com.kangsam.daangnrecruit.sync.DaangnSync
+import com.kangsam.daangnrecruit.sync.Notice
+import com.kangsam.daangnrecruit.sync.NoticeMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -17,6 +21,7 @@ import java.io.File
 
 /**
  * 당근 알림을 읽어서 (1) 알림 원문을 기록 파일에 남기고, (2) 지원 알림이면 폰 안 DB에 지원자 한 줄을 남기는 서비스 (사용자 프로세스 B1).
+ * (3) 지원자가 보낸 채팅 메시지 알림이면 그 지원자의 대화에 남김 (당근 가져오기 C3 — 그 기능이 켜져 있을 때만, 10/18).
  * 알림을 지우거나 누르는 동작은 하지 않는다 (읽기 전용).
  * 오류가 나도 서비스가 멈추지 않게 잡아서 오류 기록(DB)에 남긴다.
  */
@@ -47,6 +52,14 @@ class DaangnNotificationListener : NotificationListenerService() {
             .onFailure { saveError("알림 기록", it) }
 
         // (2) 지원 알림이면 지원자 한 줄 저장 (같은 알림은 두 번 저장하지 않음)
+        detectApply(sbn)
+
+        // (3) 지원자가 보낸 채팅 메시지면 그 지원자 대화에 남김 (당근 가져오기가 켜져 있고 전체 멈춤이 아닐 때만)
+        if (DaangnSync.canRun(this)) saveChat(sbn)
+    }
+
+    /** (2) 지원 알림 → 지원자 한 줄 (공고명으로 게시물을 붙임) */
+    private fun detectApply(sbn: StatusBarNotification) {
         val found = runCatching { ApplyDetector.detect(sbn) }
             .onFailure { saveError("지원 감지", it) }
             .getOrDefault(emptyList())
@@ -61,6 +74,48 @@ class DaangnNotificationListener : NotificationListenerService() {
                     .onFailure { saveError("지원 저장", it) }
             }
         }
+    }
+
+    /** (3) 지원자 채팅 메시지 → 대화 (앱에 있는 지원자 한 명과 이름이 같을 때만. 못 붙인 것은 오류 기록에 남겨 보이게) */
+    private fun saveChat(sbn: StatusBarNotification) {
+        val notice = runCatching { toNotice(sbn) }
+            .onFailure { saveError("대화 알림 읽기", it) }
+            .getOrNull() ?: return
+        if (ChatNotify.messages(notice).isEmpty()) return
+        scope.launch {
+            runCatching { ChatNotify.save(AppDatabase.get(applicationContext), notice) }
+                .onSuccess { r ->
+                    r.saved.forEach { Log.i(TAG, "대화 알림: $it") }
+                    r.problems.forEach { problem ->
+                        AppDatabase.get(applicationContext).errorLogDao().insert(
+                            ErrorLog(time = System.currentTimeMillis(), place = "대화 알림", message = problem)
+                        )
+                    }
+                }
+                .onFailure { saveError("대화 알림 저장", it) }
+        }
+    }
+
+    /** 알림을 순수 값으로 (대화 알림 읽기 — 폰 없이 시험하는 코드에 넘김) */
+    private fun toNotice(sbn: StatusBarNotification): Notice {
+        val n = sbn.notification
+        val extras = n.extras
+        val style = runCatching {
+            NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(n)
+        }.getOrNull()
+        return Notice(
+            pkg = sbn.packageName,
+            channel = n.channelId ?: "",
+            group = n.group ?: "",
+            tag = sbn.tag ?: "",
+            title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: "",
+            conversation = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString() ?: "",
+            messages = style?.messages?.map { m ->
+                NoticeMessage(m.person?.name?.toString() ?: "", m.text?.toString() ?: "", m.timestamp)
+            } ?: emptyList(),
+            text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: "",
+            time = if (n.`when` > 0) n.`when` else sbn.postTime,
+        )
     }
 
     /** 알림 한 건을 기록 파일용 JSON으로 바꿈 */
