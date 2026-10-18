@@ -126,6 +126,10 @@ interface ApplicantDao {
     @Query("SELECT * FROM applicants WHERE postTitle = :title AND name = :name")
     suspend fun findByTitleAndName(title: String, name: String): List<Applicant>
 
+    /** 한 게시물(회차)에 붙은 지원 건 (당근 지원자 목록과 맞출 때 — 목록에서 빠진 사람·수 비교) */
+    @Query("SELECT * FROM applicants WHERE postingId = :postingId")
+    suspend fun byPosting(postingId: Long): List<Applicant>
+
     /** 개발용: sourceKey가 이 글자로 시작하는 줄을 지움 (화면에서 가져온 지원자 지우기). 지운 줄 수를 돌려줌 */
     @Query("DELETE FROM applicants WHERE sourceKey LIKE :prefix || '%'")
     suspend fun deleteBySourcePrefix(prefix: String): Int
@@ -138,9 +142,21 @@ interface ApplicantDao {
     @Query("SELECT * FROM applicants WHERE isSample = 0")
     suspend fun nonSample(): List<Applicant>
 
+    /** 지원자 한 명 (첫 메시지 드라이런) */
+    @Query("SELECT * FROM applicants WHERE id = :id")
+    suspend fun get(id: Long): Applicant?
+
     /** 개발용: 예시 지원자 (adb 테스트 알림으로 온 메시지는 예시에만 붙임) */
     @Query("SELECT * FROM applicants WHERE isSample = 1")
     suspend fun samples(): List<Applicant>
+
+    /** 연락처 키가 같은 다른 지원 건 (번호를 받을 때 합치기 확인 — ContactFlow) */
+    @Query("SELECT * FROM applicants WHERE phoneKey = :phoneKey AND phoneKey != '' AND id != :exceptId ORDER BY appliedAt")
+    suspend fun samePhone(phoneKey: String, exceptId: Long): List<Applicant>
+
+    /** 연락처가 빈 지원자 (합친 줄은 뺌 — 지난 대화에서 번호 채우기) */
+    @Query("SELECT * FROM applicants WHERE phoneKey = '' AND status != :merged")
+    suspend fun withoutPhone(merged: String): List<Applicant>
 }
 
 @Dao
@@ -176,6 +192,14 @@ interface MessageDao {
     /** 한 지원자의 대화 (오래된 것부터) */
     @Query("SELECT * FROM messages WHERE applicantId = :applicantId ORDER BY time")
     fun observeFor(applicantId: Long): Flow<List<Message>>
+
+    /** 한 지원자의 대화를 한 번 읽음 (오래된 것부터 — 첫 메시지 드라이런) */
+    @Query("SELECT * FROM messages WHERE applicantId = :applicantId ORDER BY time")
+    suspend fun listFor(applicantId: Long): List<Message>
+
+    /** 이 방법으로 보낸 최근 메시지 (최근 것부터 — 앱이 보낸 문구와 같은 문구를 피할 때) */
+    @Query("SELECT * FROM messages WHERE sendMethod = :method ORDER BY time DESC LIMIT :limit")
+    suspend fun recentByMethod(method: String, limit: Int): List<Message>
 }
 
 @Dao

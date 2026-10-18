@@ -2,6 +2,7 @@ package com.kangsam.daangnrecruit.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -35,24 +37,23 @@ import androidx.compose.ui.unit.dp
 import com.kangsam.daangnrecruit.AppDatabase
 import com.kangsam.daangnrecruit.Applicant
 import com.kangsam.daangnrecruit.ApplicantStatus
+import com.kangsam.daangnrecruit.ApplicantView
 import com.kangsam.daangnrecruit.FeatureSettings
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 // 2. 지원자 — 목록과 응대 켜기·끄기 (화면 설계 '화면별 기능')
+// 10/18: 위 공고 칸으로 공고별로 나눠 보고, 끝난 지원(종료·합침·미응답)은 안 보임 — 보일 지원자를 고르는 규칙은 ApplicantView
 
-/** 목록 필터 */
+/** 목록 필터 (고른 공고 안에서) */
 private enum class ApplicantFilter(val label: String) {
-    ALL("전체"), CHECK("확인 필요"), HANDED_OVER("넘김")
+    TO_HANDLE("처리할 것"), CHECK("확인 필요"), HANDED_OVER("넘김")
 }
 
-/** 확인 필요로 보내는 상태 (보류·담당자 확인) */
-private val CHECK_STATUSES = setOf(ApplicantStatus.HOLD, ApplicantStatus.STAFF_CHECK)
-
 private fun matches(a: Applicant, f: ApplicantFilter): Boolean = when (f) {
-    ApplicantFilter.ALL -> true
-    ApplicantFilter.CHECK -> a.status in CHECK_STATUSES
+    ApplicantFilter.TO_HANDLE -> ApplicantView.toHandle(a)
+    ApplicantFilter.CHECK -> a.status in ApplicantView.CHECK
     ApplicantFilter.HANDED_OVER -> a.status == ApplicantStatus.HANDED_OVER
 }
 
@@ -62,7 +63,10 @@ fun ApplicantsScreen(onGoCheck: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val db = remember { AppDatabase.get(context) }
     val applicants by remember { db.applicantDao().observeAll() }.collectAsState(initial = emptyList())
-    var filter by rememberSaveable { mutableStateOf(ApplicantFilter.ALL) }
+    val posts by remember { db.postDao().observeStandingPosts() }.collectAsState(initial = emptyList())
+    val postings by remember { db.postDao().observePostings() }.collectAsState(initial = emptyList())
+    var filter by rememberSaveable { mutableStateOf(ApplicantFilter.TO_HANDLE) }
+    var groupKey by rememberSaveable { mutableStateOf<String?>(null) }
     var openedId by rememberSaveable { mutableStateOf<Long?>(null) }
     var daangnOn by remember { mutableStateOf(FeatureSettings.isOn(context, FeatureSettings.DAANGN_REPLY)) }
     var smsOn by remember { mutableStateOf(FeatureSettings.isOn(context, FeatureSettings.SMS_REPLY)) }
@@ -93,10 +97,29 @@ fun ApplicantsScreen(onGoCheck: () -> Unit, modifier: Modifier = Modifier) {
             )
             Spacer(Modifier.height(12.dp))
 
-            // 필터: 전체 · 확인 필요(보류·담당자 확인) · 넘김
+            // 공고 칸: 공고마다 보이는 지원자 수 (끝난 지원 빼고 — 당근 지원자 목록의 수와 같음). 처음엔 지금 올라가 있는 공고
+            val groups = ApplicantView.groups(applicants, posts, postings)
+            val group = groups.firstOrNull { it.key == groupKey } ?: groups.firstOrNull()
+            val inGroup = group?.applicants.orEmpty()
+            if (groups.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    groups.forEach { g ->
+                        FilterChip(
+                            selected = g.key == group?.key,
+                            onClick = { groupKey = g.key },
+                            label = { Text("${g.label} ${g.applicants.size}명") }
+                        )
+                    }
+                }
+            }
+
+            // 필터 (고른 공고 안에서): 처리할 것 · 확인 필요(보류·담당자 확인) · 넘김
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ApplicantFilter.entries.forEach { f ->
-                    val count = applicants.count { matches(it, f) }
+                    val count = inGroup.count { matches(it, f) }
                     FilterChip(
                         selected = filter == f,
                         onClick = { filter = f },
@@ -104,13 +127,18 @@ fun ApplicantsScreen(onGoCheck: () -> Unit, modifier: Modifier = Modifier) {
                     )
                 }
             }
+            Text(
+                "끝난 지원(종료·합침·미응답)은 안 보여요",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(Modifier.height(8.dp))
 
-            val shown = applicants.filter { matches(it, filter) }
+            val shown = inGroup.filter { matches(it, filter) }
             if (shown.isEmpty()) {
                 Text(
-                    if (applicants.isEmpty()) "아직 없음 — 지원 알림이 오거나, 설정 → 알림 기록 (개발용)에서 예시 데이터를 넣으면 보여요"
-                    else "이 필터에 해당하는 지원자가 없어요",
+                    if (groups.isEmpty()) "아직 없음 — 지원 알림이 오거나 설정에서 '당근에서 가져오기'를 하면 보여요"
+                    else "이 공고에 해당하는 지원자가 없어요",
                     style = MaterialTheme.typography.bodySmall
                 )
             } else {
@@ -118,7 +146,7 @@ fun ApplicantsScreen(onGoCheck: () -> Unit, modifier: Modifier = Modifier) {
                     items(shown, key = { it.id }) { a ->
                         ApplicantListRow(a) {
                             // 보류·담당자 확인은 확인 필요 탭으로, 나머지는 지원자 상세로
-                            if (a.status in CHECK_STATUSES) {
+                            if (a.status in ApplicantView.CHECK) {
                                 onGoCheck()
                             } else {
                                 openedId = a.id

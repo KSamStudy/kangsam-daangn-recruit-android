@@ -18,8 +18,8 @@ enum class DaangnPage(val label: String) {
     OTHER("다른 화면"),
 }
 
-/** 채팅 목록의 지원자 방 한 줄 (당근·당근알바 같은 공식 방은 빼고) */
-data class ChatRow(val index: Int, val name: String, val area: String, val unread: Boolean)
+/** 채팅 목록의 지원자 방 한 줄 (당근·당근알바 같은 공식 방은 빼고). ago = 마지막 대화 때 ('3일 전'·'2달 전' — 화면 글자 그대로) */
+data class ChatRow(val index: Int, val name: String, val area: String, val unread: Boolean, val ago: String = "")
 
 object DaangnNav {
     private val JOBS_ROW = Regex("""^진행중인 구인\s*\d+$""")
@@ -167,21 +167,60 @@ object DaangnNav {
                 val c = nodes[j]
                 c.text.isNotBlank() && c.text.trim().all { it.isDigit() } && c.left >= badgeLeft
             }
-            out.add(ChatRow(i, texts[0], texts[1], unread))
+            out.add(ChatRow(i, texts[0], texts[1], unread, texts[3]))
         }
         return out
     }
 
-    /** 채팅 목록을 스크롤할 칸 */
-    fun chatListScroller(nodes: List<UiNode>): Int? {
-        val row = chatRows(nodes).firstOrNull()?.index ?: return null
-        var p = nodes[row].parent
-        while (p >= 0) {
-            if (nodes[p].scrollable) return p
-            p = nodes[p].parent
-        }
-        return null
+    /**
+     * 채팅 목록은 마지막 대화가 최근인 방부터 → 한 화면의 방이 모두 cutoff보다 오래됐으면 그 아래는 볼 필요가 없음
+     * (cutoff = 앱에 있는 지원자가 가장 먼저 지원한 때 − ROOM_AGE_MARGIN_MS). 때를 못 읽는 줄이 있으면 false
+     */
+    fun allOlderThan(rows: List<ChatRow>, cutoff: Long, now: Long): Boolean =
+        rows.isNotEmpty() && rows.all { r -> MyPostParser.estimatePostedAt(r.ago, now)?.let { it < cutoff } == true }
+
+    /** 지원하기 전에 그 사람과 대화했을 수도 있어서 지원 시각보다 이만큼 더 오래된 방까지는 봄 */
+    const val ROOM_AGE_MARGIN_MS = 7 * 86_400_000L
+
+    /** 채팅방 입력창 (첫 메시지 드라이런에서 있는지만 봄 — 누르거나 쓰지 않음) */
+    fun chatInput(nodes: List<UiNode>): Int? {
+        val row = nodes.indexOfFirst { it.viewId.endsWith("composeInputRow") }
+        val range = if (row >= 0) UiTree.subtree(nodes, row) else nodes.indices
+        return range.firstOrNull { nodes[it].shortCls == "EditText" }
     }
+
+    /** 채팅방 전송 버튼 (첫 메시지 드라이런에서 있는지만 봄 — 누르지 않음, isSafeToClick도 막음) */
+    fun sendButton(nodes: List<UiNode>): Int? {
+        val row = nodes.indexOfFirst { it.viewId.endsWith("composeInputRow") }
+        if (row < 0) return null
+        return UiTree.subtree(nodes, row).firstOrNull { i ->
+            val n = nodes[i]
+            val words = "${n.text} ${n.desc}"
+            n.clickable && (words.contains("전송") || words.contains("보내기"))
+        }
+    }
+
+    /**
+     * 채팅 목록을 스크롤할 칸: 지원자 방 줄이 있으면 그 줄을 품은 스크롤 칸, 없으면(맨 위에 당근·당근알바 공식 방·알림 줄만 보이는
+     * 화면 등 — 10/18 폰) 화면에서 가장 안쪽의 큰 스크롤 칸 (바깥 칸은 좌우로 넘기는 칸)
+     */
+    fun chatListScroller(nodes: List<UiNode>): Int? {
+        chatRows(nodes).firstOrNull()?.let { row ->
+            var p = nodes[row.index].parent
+            while (p >= 0) {
+                if (nodes[p].scrollable) return p
+                p = nodes[p].parent
+            }
+        }
+        return nodes.indices.filter { nodes[it].scrollable && nodes[it].bottom - nodes[it].top > 600 }.maxByOrNull { nodes[it].depth }
+    }
+
+    /**
+     * 채팅 목록 화면의 모든 줄 (지원자 방 + 당근·당근알바 공식 방 등) — 넘겼는지(화면이 움직였는지) 볼 때.
+     * 지원자 방 줄만 보면 공식 방·알림 줄만 바뀌는 곳에서 안 움직인 걸로 봐서 맨 위까지 못 감 (10/18 폰)
+     */
+    fun listRowKeys(nodes: List<UiNode>): List<String> =
+        nodes.indices.filter { nodes[it].clickable && nodes[it].longClickable }.map { UiTree.texts(nodes, it).take(2).joinToString("|") }
 
     /**
      * 이 화면에서 앱이 누를 수 있는 칸 (화면을 옮기는 칸만):

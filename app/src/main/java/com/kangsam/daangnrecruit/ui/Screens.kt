@@ -9,12 +9,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -78,7 +76,6 @@ private fun DaangnSyncSection(refreshTick: Int) {
     val status by DaangnSync.status.collectAsState()
     val serviceOn = remember(refreshTick) { DaangnSync.isServiceOn(context) }
     var on by remember(refreshTick) { mutableStateOf(DaangnSync.isOn(context)) }
-    var mode by remember { mutableStateOf(DaangnSync.mode(context)) }
     var message by remember { mutableStateOf("") }
     var last by remember { mutableStateOf(DaangnSync.last(context)) }
     var runLog by remember { mutableStateOf(DaangnSync.lastLog(context)) }
@@ -140,33 +137,16 @@ private fun DaangnSyncSection(refreshTick: Int) {
         if (showLog) runLog.forEach { Text(it, style = MaterialTheme.typography.labelSmall) }
     }
 
+    // 언제 가져올지 (재걸 결정 10/18: 알림이 오면 알림 내용만 기록하고, 당근 화면을 여는 가져오기는 버튼으로만)
     Spacer(Modifier.height(12.dp))
     Text("언제 가져올지", style = MaterialTheme.typography.titleSmall)
     listOf(
-        DaangnSync.MODE_BUTTON to true,
-        DaangnSync.MODE_SCHEDULE to false,
-        DaangnSync.MODE_NOTIFICATION to false,
-    ).forEach { (option, ready) ->
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().selectable(
-                selected = mode == option,
-                enabled = ready,
-                onClick = {
-                    mode = option
-                    DaangnSync.setMode(context, option)
-                }
-            )
-        ) {
-            RadioButton(selected = mode == option, onClick = null, enabled = ready)
-            Text(option + if (ready) "" else " (준비 중)", style = MaterialTheme.typography.bodyMedium)
-        }
+        "알림이 올 때: 새 지원·지원자가 보낸 메시지를 알림 내용 그대로 바로 기록해요 (당근 화면은 열지 않아요)",
+        "화면에서 가져오기: 위 '당근에서 가져오기' 버튼을 누를 때만 (정해진 시간마다는 나중에)",
+        "사람이 당근 화면(공고 상세·지원자 목록·채팅방)을 열면 그 화면도 읽어 맞춰요",
+    ).forEach { line ->
+        Text("· $line", style = MaterialTheme.typography.bodySmall)
     }
-    Text(
-        "켜져 있으면 사람이 당근 화면을 열 때도 그 화면을 읽어 맞춰요.",
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
 }
 
 /** 아직 안 만든 화면에 쓰는 임시 화면: 제목과 무엇이 들어갈지만 보여줌 */

@@ -6,6 +6,7 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.kangsam.daangnrecruit.reply.ContactFlow
 import com.kangsam.daangnrecruit.sync.ChatNotify
 import com.kangsam.daangnrecruit.sync.DaangnSync
 import com.kangsam.daangnrecruit.sync.Notice
@@ -22,7 +23,8 @@ import java.io.File
 /**
  * 당근 알림을 읽어서 (1) 알림 원문을 기록 파일에 남기고, (2) 지원 알림이면 폰 안 DB에 지원자 한 줄을 남기는 서비스 (사용자 프로세스 B1).
  * (3) 지원자가 보낸 채팅 메시지 알림이면 그 지원자의 대화에 남김 (당근 가져오기 C3 — 그 기능이 켜져 있을 때만, 10/18).
- * 알림을 지우거나 누르는 동작은 하지 않는다 (읽기 전용).
+ * (4) 새로 남긴 메시지에 휴대폰 번호가 있으면 연락처를 저장하고 '연락처 확보'로 (지원자 응대 B3 — reply/ContactFlow, 10/18).
+ * 알림을 지우거나 누르는 동작은 하지 않는다 (읽기 전용). 당근·문자로 보내는 일도 없음.
  * 오류가 나도 서비스가 멈추지 않게 잡아서 오류 기록(DB)에 남긴다.
  */
 class DaangnNotificationListener : NotificationListenerService() {
@@ -83,16 +85,26 @@ class DaangnNotificationListener : NotificationListenerService() {
             .getOrNull() ?: return
         if (ChatNotify.messages(notice).isEmpty()) return
         scope.launch {
-            runCatching { ChatNotify.save(AppDatabase.get(applicationContext), notice) }
+            val db = AppDatabase.get(applicationContext)
+            runCatching { ChatNotify.save(db, notice) }
                 .onSuccess { r ->
                     r.saved.forEach { Log.i(TAG, "대화 알림: $it") }
                     r.problems.forEach { problem ->
-                        AppDatabase.get(applicationContext).errorLogDao().insert(
-                            ErrorLog(time = System.currentTimeMillis(), place = "대화 알림", message = problem)
-                        )
+                        db.errorLogDao().insert(ErrorLog(time = System.currentTimeMillis(), place = "대화 알림", message = problem))
                     }
+                    findPhone(db, r.newMessages)
                 }
                 .onFailure { saveError("대화 알림 저장", it) }
+        }
+    }
+
+    /** (4) 새로 남긴 지원자 메시지에서 번호 받기 (B3). '당근 응대'가 켜져 있으면 '새 지원'에서 받은 번호도 앱이 맡음 */
+    private suspend fun findPhone(db: AppDatabase, messages: List<ChatNotify.NewMessage>) {
+        val appInCharge = FeatureSettings.isOn(applicationContext, FeatureSettings.DAANGN_REPLY)
+        for (m in messages) {
+            runCatching { ContactFlow.onMessage(db, m.applicantId, m.text, appInCharge) }
+                .onSuccess { line -> if (line != null) Log.i(TAG, "번호 받기: $line") }
+                .onFailure { saveError("번호 받기", it) }
         }
     }
 

@@ -48,10 +48,16 @@ object ChatNotify {
     private const val DAANGN = "당근"
     private const val SENDER = "지원자" // 대화 표의 보낸 쪽
 
-    /** 한 알림을 남긴 결과: 남긴 것 한 줄씩, 못 붙인 것 한 줄씩 */
-    data class Result(val saved: List<String>, val problems: List<String>) {
+    /**
+     * 한 알림을 남긴 결과: 남긴 것 한 줄씩, 못 붙인 것 한 줄씩, 새로 남긴 메시지
+     * (newMessages — 알림 리스너가 이것으로 번호 받기(ContactFlow, 응대 B3)를 부름)
+     */
+    data class Result(val saved: List<String>, val problems: List<String>, val newMessages: List<NewMessage> = emptyList()) {
         val isEmpty: Boolean get() = saved.isEmpty() && problems.isEmpty()
     }
+
+    /** 새로 남긴 지원자 메시지 하나 */
+    data class NewMessage(val applicantId: Long, val text: String, val time: Long)
 
     /** 이 알림에서 지원자가 보낸 것으로 보이는 메시지들 (아니면 빈 목록) */
     fun messages(n: Notice): List<NoticeMessage> {
@@ -80,6 +86,7 @@ object ChatNotify {
             .filter { it.status != ApplicantStatus.MERGED }
         val saved = mutableListOf<String>()
         val problems = mutableListOf<String>()
+        val fresh = mutableListOf<NewMessage>()
         for ((sender, msgs) in list.groupBy { it.sender.trim() }) {
             val same = people.filter { it.name == sender }
             if (same.isEmpty()) continue // 앱에 없는 사람 (지원자 채팅이 아님)
@@ -100,13 +107,16 @@ object ChatNotify {
                         isSample = test,
                     )
                 )
-                if (id > 0) added++
+                if (id > 0) {
+                    added++
+                    fresh += NewMessage(a.id, m.text, m.time)
+                }
             }
             if (added > 0) {
                 msgs.maxOfOrNull { it.time }?.let { db.applicantDao().touchLastMessage(a.id, it) }
                 saved += "'$sender' 메시지 ${added}개 남김"
             }
         }
-        return Result(saved, problems)
+        return Result(saved, problems, fresh)
     }
 }

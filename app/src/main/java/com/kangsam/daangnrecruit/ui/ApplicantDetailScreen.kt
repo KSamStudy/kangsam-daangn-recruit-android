@@ -15,10 +15,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +35,11 @@ import com.kangsam.daangnrecruit.AppDatabase
 import com.kangsam.daangnrecruit.Applicant
 import com.kangsam.daangnrecruit.ApplicantStatus
 import com.kangsam.daangnrecruit.Message
+import com.kangsam.daangnrecruit.reply.DaangnReply
+import com.kangsam.daangnrecruit.reply.ReplyPlanner
+import com.kangsam.daangnrecruit.reply.ReplyRules
+import com.kangsam.daangnrecruit.reply.Templates
+import java.time.ZoneId
 import kotlinx.coroutines.launch
 
 // 3. 지원자 상세 — 한 사람의 정보와 대화 (화면 설계 '화면별 기능')
@@ -173,6 +180,12 @@ fun ApplicantDetailScreen(applicantId: Long, onBack: () -> Unit, modifier: Modif
                     }
                 }
                 Spacer(Modifier.height(12.dp))
+                NextStepSection(a, messages)
+                if (!a.isSample) {
+                    Spacer(Modifier.height(12.dp))
+                    DryRunSection(a.id)
+                }
+                Spacer(Modifier.height(12.dp))
                 SectionTitle("대화 ${messages.size}")
                 if (messages.isEmpty()) {
                     Text("아직 대화 없음", style = MaterialTheme.typography.bodySmall)
@@ -197,6 +210,101 @@ fun ApplicantDetailScreen(applicantId: Long, onBack: () -> Unit, modifier: Modif
                 is Block.Single -> Bubble(block.message)
             }
         }
+    }
+}
+
+/**
+ * 다음에 앱이 할 일 (보내지 않음) — ReplyPlanner의 계획: 무엇을 · 언제 · 어떤 문구로 보낼지와 지금 안 보내는 이유.
+ * 문구는 지원자마다 문구 틀(Templates)에서 무작위로 고른 것이라 사람마다 조금씩 다름 (매크로처럼 안 보이게)
+ */
+@Composable
+private fun NextStepSection(a: Applicant, messages: List<Message>) {
+    val context = LocalContext.current
+    val db = remember { AppDatabase.get(context) }
+    var recent by remember { mutableStateOf<List<String>?>(null) }
+    LaunchedEffect(a.id, messages.size) {
+        recent = db.messageDao().recentByMethod(ReplyRules.SENT_BY_APP, Templates.RECENT_TO_AVOID).map { it.content }
+    }
+    val avoid = recent ?: return
+    val plan = remember(a, messages, avoid) {
+        ReplyPlanner.plan(a, messages, avoid, DaangnReply.switches(context), ZoneId.systemDefault())
+    }
+    SectionTitle("다음에 앱이 할 일 (보내지 않음)")
+    Text(plan.step, style = MaterialTheme.typography.bodyMedium)
+    plan.sends.forEach { PlannedSend(it) }
+    plan.notes.forEach {
+        Text("· $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** 계획에 있는 보낼 것 하나: 어디로·무엇·언제, 문구, 발송 전 검사, 지금 안 보내는 이유 */
+@Composable
+private fun PlannedSend(s: ReplyPlanner.Send) {
+    Spacer(Modifier.height(6.dp))
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text("${s.channel} · ${s.what} · ${whenText(s)}", style = MaterialTheme.typography.labelMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(s.text, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (s.problems.isEmpty()) "발송 전 검사 통과 (${s.text.length}자 · ${s.text.lines().size}줄)"
+                else "발송 전 검사 걸림: ${s.problems.joinToString(", ")}",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (s.problems.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
+            )
+            if (s.blocked.isNotEmpty()) {
+                Text(
+                    "지금은 안 보냄: ${s.blocked.joinToString(" · ")}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/** 언제 보낼지: '번호 받은 때 7분 뒤 (10/18 20:13)' 또는 발송 시간 밖이면 미룬 시각 */
+private fun whenText(s: ReplyPlanner.Send): String {
+    val minutes = (s.sendAt - s.from) / 60_000
+    return if (minutes in 0..60) "${s.fromLabel} ${minutes}분 뒤 (${formatTime(s.sendAt)})"
+    else "발송 시간(09~21시) 밖이라 ${formatTime(s.sendAt)}"
+}
+
+/**
+ * 개발용: 당근 첫 메시지 드라이런 (사용자 프로세스 B2 — 1차 도전 목표). 앱이 이 지원자 채팅방까지 가서
+ * 보낼 문구·발송 전 검사·실제라면 보낼지만 보여줌. 입력창에 쓰거나 전송하지 않고, 앱 기록도 바꾸지 않음
+ */
+@Composable
+private fun DryRunSection(applicantId: Long) {
+    val context = LocalContext.current
+    val status by DaangnReply.status.collectAsState()
+    var message by remember(applicantId) { mutableStateOf("") }
+    var last by remember(applicantId) { mutableStateOf(DaangnReply.last(context, applicantId)) }
+    var log by remember(applicantId) { mutableStateOf(DaangnReply.lastLog(context, applicantId)) }
+    var showLog by remember(applicantId) { mutableStateOf(false) }
+    LaunchedEffect(applicantId, status) {
+        last = DaangnReply.last(context, applicantId)
+        log = DaangnReply.lastLog(context, applicantId)
+    }
+    SectionTitle("당근 첫 메시지 드라이런 (개발용)")
+    OutlinedButton(onClick = { message = DaangnReply.startDryRun(context, applicantId) }, enabled = !DaangnReply.running) {
+        Text("채팅방까지 가서 보낼 문구 확인 (보내지 않음)")
+    }
+    Text(
+        "앱이 당근 채팅 탭에서 이 지원자 방을 열고, 보낼 문구와 실제라면 보낼지만 보여줘요. " +
+            "입력창에 쓰거나 전송하지 않고, 안 읽은 방은 열지 않아요.",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    if (message.isNotBlank()) Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+    if (DaangnReply.running && status.isNotBlank()) Text("지금: $status", style = MaterialTheme.typography.bodySmall)
+    last?.let { (time, text) -> Text("마지막: ${formatTime(time)} $text", style = MaterialTheme.typography.bodySmall) }
+    if (log.isNotEmpty()) {
+        TextButton(onClick = { showLog = !showLog }) {
+            Text(if (showLog) "드라이런 기록 접기" else "드라이런 기록 보기 (${log.size}줄)")
+        }
+        if (showLog) log.forEach { Text(it, style = MaterialTheme.typography.labelSmall) }
     }
 }
 

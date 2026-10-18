@@ -15,7 +15,11 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.TextView
+import com.kangsam.daangnrecruit.reply.ContactFlow
+import com.kangsam.daangnrecruit.reply.DaangnReply
+import com.kangsam.daangnrecruit.reply.FirstMessageDryRun
 import com.kangsam.daangnrecruit.sync.DaangnSync
+import com.kangsam.daangnrecruit.sync.ScreenChatRoom
 import com.kangsam.daangnrecruit.sync.ScreenDriver
 import com.kangsam.daangnrecruit.sync.ScreenImport
 import com.kangsam.daangnrecruit.sync.Snapshot
@@ -36,6 +40,9 @@ import kotlinx.coroutines.launch
  * 무엇을 읽고 언제 누를지는 sync 폴더의 코드가 정함.
  * - 사람이 당근 화면을 열면: 기능이 켜져 있을 때 그 화면을 읽어 앱에 맞춤 (공고 상세·지원자 목록·채팅방)
  * - 설정의 '당근에서 가져오기': SyncRunner가 이 손으로 당근을 돌며 가져옴 (도는 동안 화면 아래에 '가져오는 중' 띠, 화면 안 꺼짐)
+ * - 지원자 상세의 '첫 메시지 드라이런': FirstMessageDryRun(reply 폴더)이 그 지원자 채팅방까지 가서 확인만 함 (입력·전송 없음)
+ * - 채팅방에서 지난 대화를 가져온 뒤: 연락처가 빈 지원자의 번호를 지난 대화에서 채움 (ContactFlow.fillFromHistory — 상태는 그대로)
+ * 한 번에 하나만 돎 (driving)
  * 당근 앱 화면만 받음(packageNames). 폰 설정 → 접근성에서 켜야 동작.
  */
 class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
@@ -48,6 +55,11 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
     private var lastSignature = ""
     private var lastReadAt = 0L
     private var banner: TextView? = null
+
+    /** 지금 앱이 당근을 다루는 중인지 (가져오기·드라이런 — 한 번에 하나만, 그동안 사람이 연 화면 읽기는 쉼) */
+    @Volatile
+    var driving: Boolean = false
+        private set
 
     override fun onServiceConnected() {
         instance = this
@@ -75,7 +87,7 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.packageName?.toString() != DAANGN) return
-        if (!DaangnSync.canRun(this) || DaangnSync.running) return
+        if (!DaangnSync.canRun(this) || driving) return
         // 화면이 바뀌는 동안 이벤트가 여러 번 오므로, 잠잠해지고 1초 뒤에 한 번만 읽음
         handler.removeCallbacks(readLater)
         handler.postDelayed(readLater, READ_DELAY_MS)
@@ -96,20 +108,29 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
                 .onSuccess { message ->
                     DaangnSync.saveLast(applicationContext, message)
                     Log.i(TAG, message)
+                    if (screen is ScreenChatRoom) fillPhones()
                 }
                 .onFailure { saveError("화면에서 가져오기", it) }
         }
     }
 
+    /** 화면에서 가져온 지난 대화로 연락처가 빈 지원자의 번호를 채움 (응대 B3 — 상태는 안 바꿈) */
+    private suspend fun fillPhones() {
+        runCatching { ContactFlow.fillFromHistory(AppDatabase.get(applicationContext)) }
+            .onSuccess { lines -> lines.forEach { Log.i(TAG, "지난 대화에서 번호: $it") } }
+            .onFailure { saveError("지난 대화에서 번호 채우기", it) }
+    }
+
     // ---------- '당근에서 가져오기' 버튼 (DaangnSync.start가 부름)
 
     fun runSync(onDone: (String, List<String>) -> Unit) {
+        driving = true
         mainScope.launch {
-            showBanner()
+            showBanner(SYNC_BANNER)
             val runner = SyncRunner(this@DaangnAccessibilityService, AppDatabase.get(applicationContext), ZoneId.systemDefault(),
                 say = { line ->
                     DaangnSync.say(line)
-                    banner?.text = "$BANNER\n$line"
+                    banner?.text = "$SYNC_BANNER\n$line"
                 })
             val result = runCatching { runner.run() }.getOrElse { e ->
                 saveError("당근에서 가져오기", e)
@@ -117,6 +138,30 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
                 "오류로 멈춤: ${e.message ?: e.javaClass.simpleName}"
             }
             hideBanner()
+            driving = false
+            onDone(result, runner.log)
+            ioScope.launch { fillPhones() }
+        }
+    }
+
+    // ---------- 지원자 상세의 '첫 메시지 드라이런' (DaangnReply.startDryRun이 부름)
+
+    fun runDryRun(applicantId: Long, onDone: (String, List<String>) -> Unit) {
+        driving = true
+        mainScope.launch {
+            showBanner(DRY_BANNER)
+            val runner = FirstMessageDryRun(this@DaangnAccessibilityService, AppDatabase.get(applicationContext), applicantId,
+                say = { line ->
+                    DaangnReply.say(line)
+                    banner?.text = "$DRY_BANNER\n$line"
+                })
+            val result = runCatching { runner.run() }.getOrElse { e ->
+                saveError("첫 메시지 드라이런", e)
+                openApp()
+                "드라이런 오류로 멈춤: ${e.message ?: e.javaClass.simpleName}"
+            }
+            hideBanner()
+            driving = false
             onDone(result, runner.log)
         }
     }
@@ -125,10 +170,10 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
      * 가져오는 동안 화면 아래쪽에 띠를 띄움: 앱이 당근을 다루는 중임을 보여 주고, 도는 동안 화면이 꺼지지 않게 함 (FLAG_KEEP_SCREEN_ON).
      * 접근성 서비스만 띄울 수 있는 칸이라 다른 권한이 필요 없고, 손가락 터치는 그대로 아래로 지나감
      */
-    private fun showBanner() {
+    private fun showBanner(title: String) {
         if (banner != null) return
         val view = TextView(this).apply {
-            text = BANNER
+            text = title
             setTextColor(Color.WHITE)
             setBackgroundColor(0xDD333333.toInt())
             textSize = 13f
@@ -161,7 +206,7 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
     override fun current(): Snapshot? {
         // 가져오는 동안에는 접근성 칸 기억(캐시)을 비우고 매번 새로 읽음: 화면이 한꺼번에 바뀔 때 '바뀜' 알림 일부가 빠지면
         // 옛 칸이 남아 새로 뜬 내용을 못 볼 수 있어서 (10/18 채팅 목록 의심 원인 중 하나). 안드로이드 13부터 됨
-        if (DaangnSync.running && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) clearCache()
+        if (driving && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) clearCache()
         val root = rootInActiveWindow ?: return null
         if (root.packageName?.toString() != DAANGN) return null
         return snapshotOf(root)
@@ -288,7 +333,8 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
         private const val SAME_SCREEN_MS = 60_000L
         private const val MAX_DEPTH = 100
         private const val MAX_NODES = 5_000
-        private const val BANNER = "당근 가져오는 중 — 폰을 만지지 마세요 (멈추려면 홈 버튼)"
+        private const val SYNC_BANNER = "당근 가져오는 중 — 폰을 만지지 마세요 (멈추려면 홈 버튼)"
+        private const val DRY_BANNER = "첫 메시지 드라이런 중 (입력·전송 안 함) — 폰을 만지지 마세요 (멈추려면 홈 버튼)"
 
         /** 지금 켜져 있는 서비스 (꺼져 있으면 null) — '당근에서 가져오기' 버튼이 씀 */
         @Volatile

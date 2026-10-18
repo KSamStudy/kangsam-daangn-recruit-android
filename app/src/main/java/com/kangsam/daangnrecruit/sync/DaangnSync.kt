@@ -90,6 +90,7 @@ object DaangnSync {
         val host = DaangnAccessibilityService.instance
             ?: return "접근성(당근 화면 읽기)이 꺼져 있어요 — 폰 설정 → 접근성에서 켜요"
         if (running) return "이미 가져오는 중이에요"
+        if (host.driving) return "이미 앱이 당근을 다루는 중이에요 (첫 메시지 드라이런)"
         if (runsToday(context) >= MAX_RUNS_PER_DAY) return "오늘은 하루 한도(${MAX_RUNS_PER_DAY}번)를 다 썼어요"
         running = true
         countRun(context)

@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import com.kangsam.daangnrecruit.Account
 import com.kangsam.daangnrecruit.AppDatabase
 import com.kangsam.daangnrecruit.Applicant
+import com.kangsam.daangnrecruit.ApplicantView
 import com.kangsam.daangnrecruit.FeatureSettings
 import com.kangsam.daangnrecruit.PostActions
 import com.kangsam.daangnrecruit.Posting
@@ -167,7 +168,7 @@ fun PostsScreen(modifier: Modifier = Modifier) {
     }
 }
 
-/** 공고 카드: 이름·스위치, 게시 규칙 요약·계정, 지금 상태, 진행 중 지원자 수, 지금 올리기·마감했어요, 지난 회차 */
+/** 공고 카드: 이름·스위치, 게시 규칙 요약·계정, 지금 상태, 지원자 수(끝난 지원 빼고)·진행 중 지원자 수, 지금 올리기·마감했어요, 지난 회차 */
 @Composable
 private fun PostCard(
     post: StandingPost,
@@ -181,6 +182,8 @@ private fun PostCard(
 ) {
     var showHistory by remember(post.id) { mutableStateOf(false) }
     val live = postings.firstOrNull { it.status == "게시됨" }
+    // 지원자 수는 끝난 지원(종료·합침·미응답)을 빼고 셈 — 당근 지원자 목록의 수와 같게 (ApplicantView)
+    val shown = applicants.count { ApplicantView.isShown(it) }
     val inProgress = applicants.count { it.status in PostActions.IN_PROGRESS }
     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(14.dp)) {
@@ -198,7 +201,7 @@ private fun PostCard(
             Spacer(Modifier.height(6.dp))
             Text(nowStatus(post, postings, inProgress), style = MaterialTheme.typography.bodyMedium)
             Text(
-                "진행 중 지원자 ${inProgress}명 · 전체 지원 ${applicants.size}명",
+                "지원자 ${shown}명 · 그중 연락처 받고 진행 중 ${inProgress}명",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
