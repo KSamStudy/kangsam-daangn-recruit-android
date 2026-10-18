@@ -45,6 +45,7 @@ import java.util.Locale
 
 // 2. 지원자 — 목록과 응대 켜기·끄기 (화면 설계 '화면별 기능')
 // 10/18: 위 공고 칸으로 공고별로 나눠 보고, 끝난 지원(종료·합침·미응답)은 안 보임 — 보일 지원자를 고르는 규칙은 ApplicantView
+// 10/18: 스위치 아래 '실제 발송 시험' 칸 (테스트 폰 지원자에게만 — LiveTestPanel)
 
 /** 목록 필터 (고른 공고 안에서) */
 private enum class ApplicantFilter(val label: String) {
@@ -91,10 +92,12 @@ fun ApplicantsScreen(onGoCheck: () -> Unit, modifier: Modifier = Modifier) {
                 FeatureSettings.set(context, FeatureSettings.SMS_REPLY, it)
             }
             Text(
-                "응대 기능은 아직 만들기 전이라 켜고 끈 값만 저장돼요",
+                "당근 응대는 지금 아래 '실제 발송 시험'의 테스트 폰 지원자에게만 보내요 (기존 지원자에겐 안 보냄) · 문자 응대는 아직 값만 저장돼요",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(Modifier.height(8.dp))
+            LiveTestPanel(daangnOn = daangnOn, applicants = applicants)
             Spacer(Modifier.height(12.dp))
 
             // 공고 칸: 공고마다 보이는 지원자 수 (끝난 지원 빼고 — 당근 지원자 목록의 수와 같음). 처음엔 지금 올라가 있는 공고

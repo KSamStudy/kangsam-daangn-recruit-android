@@ -139,7 +139,10 @@ class FirstMessageDryRun(
 
     /** 끝나면 채팅 목록을 맨 위로 돌려놓음 (담당자가 당근을 열었을 때 내려간 채로 보이지 않게) */
     private suspend fun tidyChatList() {
-        if (driver.current()?.page != DaangnPage.CHAT_LIST) return
+        if (w.waitFor(timeoutMs = TIDY_WAIT_MS) { it.page == DaangnPage.CHAT_LIST } == null) {
+            note("채팅 목록을 맨 위로 못 돌림 — 지금 화면: ${w.describe()}")
+            return
+        }
         w.scrollToTop(DaangnPage.CHAT_LIST, { DaangnNav.chatListScroller(it) }, ::listKeys)
     }
 
@@ -151,5 +154,6 @@ class FirstMessageDryRun(
     companion object {
         const val MAX_LIST_PAGES = 30 // 채팅 목록을 아래로 넘기며 보는 화면 수 한도 (가져오기와 같음)
         const val SHOW_MS = 4_000L    // 채팅방에서 보낼 문구를 띠에 보여 주는 시간
+        const val TIDY_WAIT_MS = 3_000L // 끝나고 채팅 목록을 맨 위로 돌려놓기 전에 채팅 목록 화면을 기다리는 시간
     }
 }

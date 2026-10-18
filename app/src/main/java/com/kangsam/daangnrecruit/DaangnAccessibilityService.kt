@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -18,6 +19,9 @@ import android.widget.TextView
 import com.kangsam.daangnrecruit.reply.ContactFlow
 import com.kangsam.daangnrecruit.reply.DaangnReply
 import com.kangsam.daangnrecruit.reply.FirstMessageDryRun
+import com.kangsam.daangnrecruit.reply.LiveGate
+import com.kangsam.daangnrecruit.reply.LiveReply
+import com.kangsam.daangnrecruit.reply.LiveTurn
 import com.kangsam.daangnrecruit.sync.DaangnSync
 import com.kangsam.daangnrecruit.sync.ScreenChatRoom
 import com.kangsam.daangnrecruit.sync.ScreenDriver
@@ -41,6 +45,7 @@ import kotlinx.coroutines.launch
  * - 사람이 당근 화면을 열면: 기능이 켜져 있을 때 그 화면을 읽어 앱에 맞춤 (공고 상세·지원자 목록·채팅방)
  * - 설정의 '당근에서 가져오기': SyncRunner가 이 손으로 당근을 돌며 가져옴 (도는 동안 화면 아래에 '가져오는 중' 띠, 화면 안 꺼짐)
  * - 지원자 상세의 '첫 메시지 드라이런': FirstMessageDryRun(reply 폴더)이 그 지원자 채팅방까지 가서 확인만 함 (입력·전송 없음)
+ * - 지원자 탭의 '실제 발송 시험': LiveTurn(reply 폴더)이 테스트 폰 지원자 한 명의 채팅방에서 입력·전송까지 (언제 돌지는 LiveReply — 10/18)
  * - 채팅방에서 지난 대화를 가져온 뒤: 연락처가 빈 지원자의 번호를 지난 대화에서 채움 (ContactFlow.fillFromHistory — 상태는 그대로)
  * 한 번에 하나만 돎 (driving)
  * 당근 앱 화면만 받음(packageNames). 폰 설정 → 접근성에서 켜야 동작.
@@ -56,7 +61,7 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
     private var lastReadAt = 0L
     private var banner: TextView? = null
 
-    /** 지금 앱이 당근을 다루는 중인지 (가져오기·드라이런 — 한 번에 하나만, 그동안 사람이 연 화면 읽기는 쉼) */
+    /** 지금 앱이 당근을 다루는 중인지 (가져오기·드라이런·실제 발송 시험 — 한 번에 하나만, 그동안 사람이 연 화면 읽기는 쉼) */
     @Volatile
     var driving: Boolean = false
         private set
@@ -166,6 +171,31 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
         }
     }
 
+    // ---------- 지원자 탭의 '실제 발송 시험' (LiveReply가 부름 — 테스트 폰 지원자 한 명에게만, 10/18)
+
+    fun runLiveTurn(applicantId: Long, config: LiveGate.Config, onDone: (String, List<String>, LiveTurn.Outcome) -> Unit) {
+        driving = true
+        mainScope.launch {
+            val title = if (config.mode == LiveGate.Mode.LIVE) LIVE_BANNER else REHEARSAL_BANNER
+            showBanner(title)
+            val turn = LiveTurn(this@DaangnAccessibilityService, AppDatabase.get(applicationContext), config, applicantId,
+                say = { line ->
+                    LiveReply.say(line)
+                    banner?.text = "$title\n$line"
+                })
+            var failed = false
+            val result = runCatching { turn.run() }.getOrElse { e ->
+                failed = true
+                saveError("실제 발송 시험", e)
+                openApp()
+                "오류로 멈춤: ${e.message ?: e.javaClass.simpleName}"
+            }
+            hideBanner()
+            driving = false
+            onDone(result, turn.log, if (failed) LiveTurn.Outcome.STOPPED else turn.outcome)
+        }
+    }
+
     /**
      * 가져오는 동안 화면 아래쪽에 띠를 띄움: 앱이 당근을 다루는 중임을 보여 주고, 도는 동안 화면이 꺼지지 않게 함 (FLAG_KEEP_SCREEN_ON).
      * 접근성 서비스만 띄울 수 있는 칸이라 다른 권한이 필요 없고, 손가락 터치는 그대로 아래로 지나감
@@ -226,6 +256,15 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
 
     override fun click(s: Snapshot, index: Int): Boolean = refs(s).getOrNull(index)?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
 
+    /** 입력창에 글자 넣기 (실제 발송 시험만 씀 — 가져오기·드라이런은 안 씀). 빈 글자면 지움. 안 되면 입력창을 한 번 고른 뒤 다시 */
+    override fun setText(s: Snapshot, index: Int, text: String): Boolean {
+        val node = refs(s).getOrNull(index) ?: return false
+        val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
+        if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) return true
+        node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        return node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+    }
+
     /**
      * 화면 방향(위·아래)으로 스크롤. 채팅방처럼 거꾸로 쌓는 목록에서는 '앞·뒤' 동작의 방향이 반대라,
      * 위·아래 동작이 있는 칸이면 그것만 씀 (그 방향 동작이 없으면 끝까지 간 것). 위·아래 동작이 아예 없는 칸만 앞·뒤로
@@ -266,6 +305,13 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
                 File(dir, "$name.xml").writeText(xml)
             }.onFailure { saveError("화면 저장 (개발용)", it) }
         }
+    }
+
+    /** 개발용: 이름이 이 글자로 시작하는 저장 화면을 지움 (가져오기가 채팅 목록 화면을 한 장씩 남기기 전에 지난번 것을 지움) */
+    override fun clearScreens(prefix: String) {
+        runCatching {
+            File(filesDir, "debug").listFiles { f -> f.name.startsWith(prefix) }?.forEach { it.delete() }
+        }.onFailure { saveError("화면 저장 지우기 (개발용)", it) }
     }
 
     /** 화면 저장에 적을 동작 이름 (누르기·스크롤만) */
@@ -335,6 +381,8 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
         private const val MAX_NODES = 5_000
         private const val SYNC_BANNER = "당근 가져오는 중 — 폰을 만지지 마세요 (멈추려면 홈 버튼)"
         private const val DRY_BANNER = "첫 메시지 드라이런 중 (입력·전송 안 함) — 폰을 만지지 마세요 (멈추려면 홈 버튼)"
+        private const val LIVE_BANNER = "실제 발송 시험 중 (테스트 폰 지원자에게만) — 폰을 만지지 마세요 (멈추려면 홈 버튼)"
+        private const val REHEARSAL_BANNER = "발송 연습 중 (입력하고 지움 · 전송 안 함) — 폰을 만지지 마세요 (멈추려면 홈 버튼)"
 
         /** 지금 켜져 있는 서비스 (꺼져 있으면 null) — '당근에서 가져오기' 버튼이 씀 */
         @Volatile

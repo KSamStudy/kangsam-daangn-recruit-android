@@ -20,6 +20,12 @@ interface ScreenDriver {
     /** 칸 스크롤 (위·아래) */
     fun scroll(s: Snapshot, index: Int, up: Boolean): Boolean
 
+    /**
+     * 입력창에 글자 넣기 — 실제 발송 시험(reply/LiveTurn)이 채팅방 입력창에만 씀 (당근 가져오기는 안 씀).
+     * 못 넣으면 false. 기본은 아무것도 안 함
+     */
+    fun setText(s: Snapshot, index: Int, text: String): Boolean = false
+
     /** 뒤로 */
     fun back()
 
@@ -34,4 +40,7 @@ interface ScreenDriver {
      * 이름 하나에 파일 하나(덮어씀). 기본은 아무것도 안 함
      */
     fun saveScreen(s: Snapshot, name: String) {}
+
+    /** 개발용: 이름이 이 글자로 시작하는 저장 화면을 지움 (화면마다 남기는 채팅 목록 — 지난번 것이 섞이지 않게). 기본은 아무것도 안 함 */
+    fun clearScreens(prefix: String) {}
 }

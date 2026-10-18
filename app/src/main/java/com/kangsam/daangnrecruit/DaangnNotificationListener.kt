@@ -7,6 +7,7 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.kangsam.daangnrecruit.reply.ContactFlow
+import com.kangsam.daangnrecruit.reply.LiveReply
 import com.kangsam.daangnrecruit.sync.ChatNotify
 import com.kangsam.daangnrecruit.sync.DaangnSync
 import com.kangsam.daangnrecruit.sync.Notice
@@ -23,8 +24,9 @@ import java.io.File
 /**
  * 당근 알림을 읽어서 (1) 알림 원문을 기록 파일에 남기고, (2) 지원 알림이면 폰 안 DB에 지원자 한 줄을 남기는 서비스 (사용자 프로세스 B1).
  * (3) 지원자가 보낸 채팅 메시지 알림이면 그 지원자의 대화에 남김 (당근 가져오기 C3 — 그 기능이 켜져 있을 때만, 10/18).
- * (4) 새로 남긴 메시지에 휴대폰 번호가 있으면 연락처를 저장하고 '연락처 확보'로 (지원자 응대 B3 — reply/ContactFlow, 10/18).
- * 알림을 지우거나 누르는 동작은 하지 않는다 (읽기 전용). 당근·문자로 보내는 일도 없음.
+ * (4) 새로 남긴 메시지에 휴대폰 번호가 있으면 연락처를 저장 (지원자 응대 B3 — reply/ContactFlow, 10/18).
+ * (5) 실제 발송 시험: 시험 대상 지원이면 첫 메시지 차례를 잡고, 당근 알림이 오면 답을 기다리는 시험 대상을 다시 보게 함 (reply/LiveReply, 10/18).
+ * 알림을 지우거나 누르는 동작은 하지 않는다 (읽기 전용). 리스너가 당근·문자로 보내는 일은 없음 (실제 발송 시험은 접근성 서비스가 함).
  * 오류가 나도 서비스가 멈추지 않게 잡아서 오류 기록(DB)에 남긴다.
  */
 class DaangnNotificationListener : NotificationListenerService() {
@@ -58,6 +60,10 @@ class DaangnNotificationListener : NotificationListenerService() {
 
         // (3) 지원자가 보낸 채팅 메시지면 그 지원자 대화에 남김 (당근 가져오기가 켜져 있고 전체 멈춤이 아닐 때만)
         if (DaangnSync.canRun(this)) saveChat(sbn)
+
+        // (5) 실제 발송 시험: 당근 알림이 오면 답을 기다리는 시험 대상의 방을 다시 봄
+        //     (지원자 채팅 알림 모양을 아직 몰라 당근 알림이면 다 — 대상이 없으면 LiveReply가 아무것도 안 함)
+        if (sbn.packageName == DAANGN) LiveReply.onNotice(applicationContext)
     }
 
     /** (2) 지원 알림 → 지원자 한 줄 (공고명으로 게시물을 붙임) */
@@ -72,7 +78,12 @@ class DaangnNotificationListener : NotificationListenerService() {
             for (a in found) {
                 // 공고명으로 게시물을 찾아 붙이고, 못 찾으면 보류 '공고 못 찾음' (B1)
                 runCatching { dao.insert(ApplyLinker.link(db, a)) }
-                    .onSuccess { id -> if (id > 0) Log.i(TAG, "새 지원 저장: ${a.name}") }
+                    .onSuccess { id ->
+                        if (id > 0) {
+                            Log.i(TAG, "새 지원 저장: ${a.name}")
+                            LiveReply.onApplied(applicationContext, id) // 실제 발송 시험 대상이면 첫 메시지 차례를 잡음
+                        }
+                    }
                     .onFailure { saveError("지원 저장", it) }
             }
         }
@@ -98,11 +109,15 @@ class DaangnNotificationListener : NotificationListenerService() {
         }
     }
 
-    /** (4) 새로 남긴 지원자 메시지에서 번호 받기 (B3). '당근 응대'가 켜져 있으면 '새 지원'에서 받은 번호도 앱이 맡음 */
+    /**
+     * (4) 새로 남긴 지원자 메시지에서 번호 받기 (B3). 앱이 첫 메시지를 보낸 지원자('첫 메시지 보냄')만 앱이 맡고,
+     * 나머지는 번호만 저장 (상태 그대로) — '당근 응대'를 켜도 지금은 실제 발송 시험 대상에게만 보내니 '새 지원'은 앱이 맡지 않음 (10/18).
+     * 실제 발송 시험 대상은 건너뜀: 그 사람의 번호·상태는 LiveTurn이 채팅방을 보고 정함 (번호가 틀리면 다시 요청)
+     */
     private suspend fun findPhone(db: AppDatabase, messages: List<ChatNotify.NewMessage>) {
-        val appInCharge = FeatureSettings.isOn(applicationContext, FeatureSettings.DAANGN_REPLY)
         for (m in messages) {
-            runCatching { ContactFlow.onMessage(db, m.applicantId, m.text, appInCharge) }
+            if (runCatching { LiveReply.owns(applicationContext, m.applicantId) }.getOrDefault(false)) continue
+            runCatching { ContactFlow.onMessage(db, m.applicantId, m.text, appInCharge = false) }
                 .onSuccess { line -> if (line != null) Log.i(TAG, "번호 받기: $line") }
                 .onFailure { saveError("번호 받기", it) }
         }
@@ -183,6 +198,7 @@ class DaangnNotificationListener : NotificationListenerService() {
 
     companion object {
         private const val TAG = "DaangnListener"
+        private const val DAANGN = "com.towneers.www" // 당근
 
         // 기록할 앱 목록
         val WATCHED_PACKAGES = setOf(

@@ -63,8 +63,12 @@ object ContactFlow {
     /** 번호가 하나로 분명할 때 그 번호를 가진 다른 지원 건 (합친 줄은 뺌) */
     private suspend fun others(db: AppDatabase, a: Applicant, found: List<PhoneNumber.Found>): List<Applicant> {
         val key = found.map { it.key }.distinct().singleOrNull() ?: return emptyList()
-        return db.applicantDao().samePhone(key, a.id).filter { it.status != ApplicantStatus.MERGED }
+        return othersWith(db, a, key)
     }
+
+    /** 이 번호(키)를 가진 다른 지원 건 (합친 줄은 뺌) — 실제 발송 시험의 마무리(LiveTurn)도 씀 */
+    suspend fun othersWith(db: AppDatabase, a: Applicant, key: String): List<Applicant> =
+        db.applicantDao().samePhone(key, a.id).filter { it.status != ApplicantStatus.MERGED }
 
     /**
      * 번호를 보고 할 일을 정함 (순수 함수 — 시험은 이것으로). 할 일이 없으면 null
@@ -106,6 +110,15 @@ object ContactFlow {
             val same = if (others.isEmpty()) "" else " · 같은 번호의 다른 지원 건: ${others.joinToString(", ") { it.name }}"
             return Change(withPhone, "연락처 저장 (상태 그대로 '${a.status}')$same")
         }
+        return gotNumber(a, f, others)
+    }
+
+    /**
+     * 앱이 맡은 지원자에게서 번호를 하나로 분명히 받음: 연락처 저장 + '연락처 확보'.
+     * 같은 번호의 다른 지원 건이 있으면 '보류'(합치기 보류) — 담당자가 확인 탭에서 정함. 실제 발송 시험의 마무리(LiveTurn)도 씀
+     */
+    fun gotNumber(a: Applicant, f: PhoneNumber.Found, others: List<Applicant>): Change {
+        val withPhone = a.copy(phone = f.raw, phoneKey = f.key)
         if (others.isNotEmpty()) {
             val o = others.first()
             val where = if (samePost(a, o)) "같은 공고" else "다른 공고"

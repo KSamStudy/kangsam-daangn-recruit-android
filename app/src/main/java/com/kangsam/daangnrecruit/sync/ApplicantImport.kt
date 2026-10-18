@@ -22,6 +22,7 @@ import com.kangsam.daangnrecruit.HoldReason
  *   - 지원한 지 30분이 안 된 사람은 목록에 아직 안 떴을 수 있어 그대로 둠
  * - 결과 줄에 이 글의 앱 기록 수와 당근 탭의 수를 견줌 (같으면 '당근과 같음')
  * - 알림이 묶여 늦게 와 지원 시각이 늦게 적힌 사람(10/18 00:00에 몰려 옴) → 목록의 'N분·N시간 전'으로 고침 ('N일 전'은 거칠어서 안 씀)
+ * - 앱이 지원서를 열어서 읽은 카드가 된 '새 지원'(실제 발송 시험 — 사유 APP_OPENED)은 담당자가 본 게 아니라서 '새 지원' 그대로 둠
  */
 object ApplicantImport {
     /** 화면에서 가져온 지원자의 sourceKey 앞부분 (알림으로 들어온 줄과 구분) */
@@ -35,6 +36,9 @@ object ApplicantImport {
 
     /** 목록에서 빠진 '담당자 응대 중'의 종료 사유 */
     const val GONE_READ = "$GONE — 담당자가 '다음 기회에'로 옮겼거나 지원자가 취소한 것으로 보임"
+
+    /** 앱이 지원서를 열어 당근에서 읽은 카드가 된 '새 지원'의 사유 (실제 발송 시험 — reply/LiveTurn이 적음) */
+    const val APP_OPENED = "앱이 지원서를 엶 (실제 발송 시험)"
 
     /** 목록에서 빠지면 '종료'로 두는 상태 (앱이 아직 아무것도 안 한 상태만) */
     private val ENDS_WHEN_GONE = setOf(ApplicantStatus.NEW, ApplicantStatus.STAFF_HANDLING)
@@ -65,7 +69,8 @@ object ApplicantImport {
                 for (e in existing) {
                     var u = e.copy(area = e.area.ifBlank { s.area })
                     // 앱이 아직 아무것도 안 한 '새 지원'인데 당근에선 담당자가 이미 봤으면 → 담당자 응대 중
-                    if (!s.unread && e.status == ApplicantStatus.NEW) {
+                    // (앱이 지원서를 열어서 읽은 카드가 된 사람은 그대로)
+                    if (!s.unread && e.status == ApplicantStatus.NEW && e.reason != APP_OPENED) {
                         u = u.copy(status = ApplicantStatus.STAFF_HANDLING, reason = reason)
                     }
                     // 목록에서 빠져 '종료'로 뒀던 사람이 다시 보이면 되돌림

@@ -108,6 +108,11 @@ class SyncRunner(
             return
         }
         val first = s
+        // 개발용: 넘긴 화면을 한 장씩 남김 (chat_page_00 = 처음 뜬 자리, 01~ = 맨 위부터 본 화면) — 지난번 것은 지움
+        if (KEEP_PAGES) {
+            driver.clearScreens(PAGE_PREFIX)
+            driver.saveScreen(s, pageName(0))
+        }
         // 목록 맨 위부터 (전에 내려 둔 자리에서 시작할 수 있음)
         s = w.scrollToTop(DaangnPage.CHAT_LIST, { DaangnNav.chatListScroller(it) }, ::listKeys) ?: s
         val top = s
@@ -120,9 +125,19 @@ class SyncRunner(
         var rooms = 0
         var unread = 0
         var end = "넘기기 한도(${MAX_LIST_PAGES}화면)까지"
+        var before = emptySet<String>() // 앞 화면의 모든 줄 (겹침 보기)
         for (page in 0 until MAX_LIST_PAGES) {
             val here = DaangnNav.chatRows(s.nodes)
-            fresh += here.count { "${it.name}|${it.area}" !in seen }
+            val newRooms = here.count { "${it.name}|${it.area}" !in seen }
+            fresh += newRooms
+            // 개발용 기록: 화면마다 지원자 방 줄 수·새로 본 수·모든 줄 수·앞 화면과 겹친 줄 수·넘기기 동작 횟수
+            val all = listKeys(s)
+            note(
+                "화면 ${page + 1}: 지원자 방 ${here.size}줄 (새 $newRooms) · 모든 줄 ${all.size}" +
+                    (if (page > 0) " · 앞 화면과 겹침 ${all.count { it in before }}줄 · 넘기기 ${w.lastNudges}번" else "")
+            )
+            before = all.toSet()
+            if (KEEP_PAGES) driver.saveScreen(s, pageName(page + 1))
             for (row in here) {
                 val key = "${row.name}|${row.area}"
                 seen += key
@@ -167,6 +182,7 @@ class SyncRunner(
             s = next
         }
         note("채팅 목록: ${fresh.size}화면 봄 (화면마다 새 방 ${fresh.joinToString("·")}) · $end")
+        if (KEEP_PAGES) note("채팅 목록 화면 ${fresh.size + 1}장 남김 (개발용: ${pageName(0)}~${pageName(fresh.size)}.xml)")
         // 방 줄은 보이는데 앱에 있는 이름이 하나도 없으면 이름 모양을 보려고 남김 (처음 뜬 화면 · 맨 위 화면)
         if (done.isEmpty()) {
             w.keepScreen("chat_list", first)
@@ -180,9 +196,14 @@ class SyncRunner(
 
     /** 끝나면 채팅 목록을 맨 위로 돌려놓음 (담당자가 당근을 열었을 때 내려간 채로 보이지 않게, 다음 번도 위에서 시작) */
     private suspend fun tidyChatList() {
-        if (driver.current()?.page != DaangnPage.CHAT_LIST) return
+        if (w.waitFor(timeoutMs = TIDY_WAIT_MS) { it.page == DaangnPage.CHAT_LIST } == null) {
+            note("채팅 목록을 맨 위로 못 돌림 — 지금 화면: ${w.describe()}")
+            return
+        }
         w.scrollToTop(DaangnPage.CHAT_LIST, { DaangnNav.chatListScroller(it) }, ::listKeys)
     }
+
+    private fun pageName(i: Int) = PAGE_PREFIX + i.toString().padStart(2, '0')
 
     /** 채팅방 하나: 맨 아래(최근)부터 위로 올려 가며 이어 붙인 뒤 저장 */
     private suspend fun readRoom(first: Snapshot): String {
@@ -246,5 +267,10 @@ class SyncRunner(
         const val MAX_ROOMS = 20      // 한 번에 여는 채팅방 수 한도
         const val MAX_LIST_PAGES = 30 // 채팅 목록을 아래로 넘기며 보는 화면 수 한도 (보통은 앱 지원자보다 오래된 방에서 멈춤)
         const val MAX_ROOM_PAGES = 20 // 채팅방 하나를 위로 올리는 횟수 한도
+        const val TIDY_WAIT_MS = 3_000L // 끝나고 채팅 목록을 맨 위로 돌려놓기 전에 채팅 목록 화면을 기다리는 시간
+
+        /** 개발용: 채팅 목록을 넘긴 화면을 한 장씩 폰 안(files/debug)에 남김 — 지원자 이름이 들어 있어 운영 전에 끔 */
+        const val KEEP_PAGES = true
+        const val PAGE_PREFIX = "chat_page_"
     }
 }

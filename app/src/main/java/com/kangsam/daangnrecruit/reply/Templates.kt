@@ -3,7 +3,7 @@ package com.kangsam.daangnrecruit.reply
 import kotlin.random.Random
 
 /**
- * 지원자에게 보낼 문구 틀 (당근 첫 메시지 · 번호 받은 뒤 마무리 · 첫 문자).
+ * 지원자에게 보낼 문구 틀 (당근 첫 메시지 · 번호 다시 요청 · 번호 받은 뒤 마무리 · 첫 문자).
  *
  * 같은 문구만 계속 보내면 매크로처럼 보일 수 있어서(재걸 10/18), 문구를 조각(인사·감사·요청 …)으로 나누고 조각마다
  * 뜻이 같은 후보를 여러 개 둬서 무작위로 조합함. 최근에 보낸 문구와 똑같은 조합은 피함 (pick).
@@ -73,11 +73,28 @@ object Templates {
         ),
     )
 
-    /** 번호를 받은 뒤 당근 마무리 1회 (B3): 감사 + 문자로 연락하겠다 */
+    /**
+     * 답에 휴대폰 번호가 없거나 형식이 다를 때 (B3, 10/18 재걸: 정해진 형식으로 다시 보내 달라고).
+     * 형식은 '010-XXXX-XXXX'로 보여 줌 — 숫자로 된 예시 번호는 발송 전 검사가 전화번호로 보고 막음
+     */
+    val DAANGN_RETRY = Template(
+        "번호 다시 요청",
+        listOf(
+            listOf("죄송하지만", "번거로우시겠지만", "혹시"),
+            listOf(" "),
+            listOf("휴대폰 번호를", "연락받으실 휴대폰 번호를"),
+            listOf(" "),
+            listOf("010-XXXX-XXXX 형식으로", "010-XXXX-XXXX처럼"),
+            listOf(" "),
+            listOf("다시 보내주실 수 있을까요?", "한 번만 다시 보내주시겠어요?", "다시 남겨주실 수 있을까요?"),
+        ),
+    )
+
+    /** 번호를 받은 뒤 당근 마무리 1회 (B3): 감사 + 문자로 연락하겠다 (10/18 재걸: 꼭 감사 인사로 시작) */
     val DAANGN_AFTER_NUMBER = Template(
         "번호 받은 뒤 마무리",
         listOf(
-            listOf("감사합니다!", "감사해요!", "확인했습니다.", "번호 확인했어요."),
+            listOf("감사합니다!", "감사해요!", "번호 감사합니다!", "알려주셔서 감사합니다."),
             listOf(" "),
             listOf("문자로 연락드릴게요.", "곧 문자로 연락드리겠습니다.", "문자로 다시 연락드릴게요.", "문자로 안내드리겠습니다."),
         ),
@@ -114,7 +131,7 @@ object Templates {
     )
 
     /** 당근 문구 틀 전부 (시험·화면 표시용) */
-    val DAANGN = listOf(DAANGN_FIRST, DAANGN_AFTER_NUMBER)
+    val DAANGN = listOf(DAANGN_FIRST, DAANGN_RETRY, DAANGN_AFTER_NUMBER)
 
     /** 문자 문구 틀 전부 */
     val SMS = listOf(SMS_FIRST)

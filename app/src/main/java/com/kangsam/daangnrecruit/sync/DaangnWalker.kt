@@ -15,10 +15,17 @@ class DaangnWalker(
     private val note: (String) -> Unit,
     private val random: Random = Random.Default,
 ) {
-    /** 바로 멈춤 (이유는 메시지) */
-    class Stop(message: String) : Exception(message)
+    /**
+     * 바로 멈춤 (이유는 메시지). left = 당근을 벗어남 (사람이 홈을 눌렀거나 다른 앱이 뜸 — 멈추는 방법이라 다시 하지 않음),
+     * alarm = 멈춤 글자(보안 인증·이용 제한 등)가 보임 (즉시 중단 — 실제 발송 시험은 시험을 끔)
+     */
+    class Stop(message: String, val left: Boolean = false, val alarm: Boolean = false) : Exception(message)
 
     private var clicks = 0
+
+    /** 마지막 pageRows에서 넘기기 동작을 몇 번 했는지 (개발용 기록) */
+    var lastNudges = 0
+        private set
 
     /** 당근 열기 */
     suspend fun open() {
@@ -36,14 +43,17 @@ class DaangnWalker(
         throw Stop("아래 탭이 있는 첫 화면으로 못 돌아갔어요")
     }
 
-    /** 사람처럼 쉬었다가, 그때 화면에서 칸을 다시 찾아 안전한지 보고 누름 */
-    suspend fun tap(what: String, find: (List<UiNode>) -> Int?) {
+    /**
+     * 사람처럼 쉬었다가, 그때 화면에서 칸을 다시 찾아 안전한지 보고 누름.
+     * safe = 눌러도 되는지 (기본은 DaangnNav — 화면을 옮기는 칸만. 실제 발송 시험은 reply/LiveNav의 확인을 따로 넘김)
+     */
+    suspend fun tap(what: String, safe: (List<UiNode>, Int) -> Boolean = DaangnNav::isSafeToClick, find: (List<UiNode>) -> Int?) {
         if (++clicks > MAX_CLICKS) throw Stop("한 번에 누르는 횟수(${MAX_CLICKS}번)를 넘어서 멈췄어요")
         driver.pause(random.nextLong(1_200, 2_800))
-        val s = driver.current() ?: throw Stop("당근 화면을 벗어나서 멈췄어요")
-        DaangnNav.stopWord(s.nodes)?.let { throw Stop("'$it' 글자가 보여서 멈췄어요") }
+        val s = driver.current() ?: throw Stop("당근 화면을 벗어나서 멈췄어요", left = true)
+        DaangnNav.stopWord(s.nodes)?.let { throw Stop("'$it' 글자가 보여서 멈췄어요", alarm = true) }
         val i = find(s.nodes) ?: throw Stop("누를 칸을 못 찾아서 멈췄어요: $what")
-        if (!DaangnNav.isSafeToClick(s.nodes, i)) throw Stop("누르면 안 되는 칸이라 멈췄어요: $what")
+        if (!safe(s.nodes, i)) throw Stop("누르면 안 되는 칸이라 멈췄어요: $what")
         if (!driver.click(s, i)) throw Stop("누르기가 안 돼서 멈췄어요: $what")
         note("누름: $what")
     }
@@ -56,7 +66,7 @@ class DaangnWalker(
 
     /**
      * 스크롤하고 화면이 바뀔 때까지 기다림 (스크롤이 끝나기 전에 읽어 '끝'으로 잘못 알지 않게).
-     * 바뀐 화면을 돌려주고, 안 움직였으면(목록 끝·맨 위) null. key = 무엇이 바뀌었는지 볼 값
+     * 바뀐 뒤에도 멈출 때까지 기다렸다가 돌려줌 (settle). 안 움직였으면(목록 끝·맨 위) null. key = 무엇이 바뀌었는지 볼 값
      */
     suspend fun scrollMoved(up: Boolean, page: DaangnPage, find: (List<UiNode>) -> Int?, key: (Snapshot) -> Any?): Snapshot? {
         driver.pause(random.nextLong(700, 1_400))
@@ -64,12 +74,40 @@ class DaangnWalker(
         val i = find(s.nodes) ?: return null
         val before = key(s)
         if (!driver.scroll(s, i, up)) return null
-        return waitFor(timeoutMs = SCROLL_WAIT_MS) { it.page == page && key(it) != before }
+        val moved = waitFor(timeoutMs = SCROLL_WAIT_MS) { it.page == page && key(it) != before } ?: return null
+        return settle(page, moved)
     }
+
+    /**
+     * 화면이 멈출 때까지 기다림: 글자와 위치가 SETTLE_POLL_MS 간격으로 두 번 연달아 같으면 멈춘 것 (SETTLE_MS까지).
+     * 당근 목록은 넘기기 동작이 애니메이션으로 움직여서, 바뀌자마자 읽으면 움직이는 도중의 화면이고 그 뒤에 지나간 줄은 못 봄
+     * (10/18 밤 폰: 읽은 방 2개를 건너뜀 — 원인으로 봄). 멈춘 화면을 돌려주고, 끝내 안 멈추면 마지막에 본 화면
+     */
+    suspend fun settle(page: DaangnPage, first: Snapshot): Snapshot {
+        var last = first
+        var sig = still(first)
+        val start = driver.clock()
+        while (driver.clock() - start < SETTLE_MS) {
+            driver.pause(SETTLE_POLL_MS)
+            val s = driver.current() ?: return last
+            DaangnNav.stopWord(s.nodes)?.let { throw Stop("'$it' 글자가 보여서 멈췄어요", alarm = true) }
+            if (s.page != page) return last
+            val g = still(s)
+            if (g == sig) return s
+            last = s
+            sig = g
+        }
+        return last
+    }
+
+    /** 화면이 멈췄는지 볼 값: 글자가 있는 칸의 글자와 위치 */
+    private fun still(s: Snapshot): List<String> =
+        s.nodes.filter { it.text.isNotBlank() }.map { "${it.text}@${it.left},${it.top}" }
 
     /**
      * 줄 목록(채팅 목록) 한 화면 넘기기. 당근 채팅 목록은 한 번 넘겨도 1~2줄만 움직여서(10/18 폰: 10화면에 새 방 20개),
      * 새 줄이 MIN_NEW_ROWS개 보일 때까지 NUDGES번까지 이어서 넘김 (한 번에 많이 움직이는 목록이면 한 번으로 끝).
+     * 넘길 때마다 목록이 멈출 때까지 기다렸다가 봄 (settle — 10/18 밤: 1~2줄씩 움직인 것처럼 보인 건 움직이는 도중에 읽어서였을 수 있음).
      * rows = 화면에 보이는 줄 이름들. 움직인 화면을 돌려주고, 처음부터 안 움직이면(맨 위·맨 끝) null
      */
     suspend fun pageRows(up: Boolean, page: DaangnPage, find: (List<UiNode>) -> Int?, rows: (Snapshot) -> List<String>): Snapshot? {
@@ -77,12 +115,15 @@ class DaangnWalker(
         var cur = driver.current() ?: return null
         val before = rows(cur).toSet()
         var moved: Snapshot? = null
+        lastNudges = 0
         for (i in 0 until NUDGES) {
             if (i > 0) driver.pause(random.nextLong(250, 600))
             val idx = find(cur.nodes) ?: break
             val now = rows(cur)
             if (!driver.scroll(cur, idx, up)) break
+            lastNudges++
             cur = waitFor(timeoutMs = SCROLL_WAIT_MS) { it.page == page && rows(it) != now } ?: break
+            cur = settle(page, cur)
             moved = cur
             if (rows(cur).count { it !in before } >= MIN_NEW_ROWS) break
         }
@@ -139,10 +180,10 @@ class DaangnWalker(
             val s = driver.current()
             if (s == null) {
                 if (awaySince < 0) awaySince = driver.clock()
-                if (driver.clock() - awaySince > awayMs) throw Stop("당근 화면을 벗어나서 멈췄어요")
+                if (driver.clock() - awaySince > awayMs) throw Stop("당근 화면을 벗어나서 멈췄어요", left = true)
             } else {
                 awaySince = -1L
-                DaangnNav.stopWord(s.nodes)?.let { throw Stop("'$it' 글자가 보여서 멈췄어요") }
+                DaangnNav.stopWord(s.nodes)?.let { throw Stop("'$it' 글자가 보여서 멈췄어요", alarm = true) }
                 if (ok(s)) return s
             }
             driver.pause(POLL_MS)
@@ -170,6 +211,8 @@ class DaangnWalker(
         const val MAX_CLICKS = 80     // 한 번에 누르는 횟수 한도
         const val WAIT_MS = 12_000L   // 화면이 뜨기를 기다리는 시간
         const val SCROLL_WAIT_MS = 2_500L // 스크롤 뒤 화면이 바뀌기를 기다리는 시간 (안 바뀌면 끝)
+        const val SETTLE_MS = 3_000L      // 스크롤로 움직이기 시작한 화면이 멈추기를 기다리는 시간
+        const val SETTLE_POLL_MS = 300L   // 멈췄는지 보는 간격 (두 번 연달아 같으면 멈춘 것)
         const val MORE_WAIT_MS = 3_000L   // 목록 끝처럼 보일 때 다음 묶음이 뜨기를 기다렸다가 한 번 더 넘겨 봄
         const val MAX_UP_PAGES = 40       // 목록 맨 위로 올릴 때 화면 수 한도
         const val NUDGES = 5              // 한 화면 넘길 때 넘기기 동작을 이어서 하는 횟수 한도

@@ -23,6 +23,7 @@ object ReplyPlanner {
     const val STEP_FIRST = "B2"  // 당근 첫 메시지
     const val STEP_CLOSE = "B3"  // 번호 받은 뒤 당근 마무리
     const val STEP_SMS = "B4"    // 첫 문자
+    const val STEP_RETRY = "B3R" // 번호 다시 요청 (뒤에 몇 번째인지)
 
     private const val DAANGN = "당근"
     private const val SMS = "문자"
@@ -77,9 +78,17 @@ object ReplyPlanner {
             else -> Plan("끝난 지원 — 앱이 할 일 없음", emptyList(), listOfNotNull(a.reason.ifBlank { null }))
         }
 
-    /** 당근 첫 메시지 문구 (계획과 드라이런이 같은 문구를 쓰게) */
+    /** 당근 첫 메시지 문구 (계획과 드라이런·실제 발송이 같은 문구를 쓰게) */
     fun firstMessage(a: Applicant, recentSent: Collection<String>): String =
         Templates.pick(Templates.DAANGN_FIRST, random(a, STEP_FIRST), recentSent)
+
+    /** 번호 받은 뒤 당근 마무리 문구 (계획과 실제 발송이 같은 문구) */
+    fun closingMessage(a: Applicant, recentSent: Collection<String>): String =
+        Templates.pick(Templates.DAANGN_AFTER_NUMBER, random(a, STEP_CLOSE), recentSent)
+
+    /** 번호 다시 요청 문구 — n번째 (1부터). 앞서 보낸 다시 요청 문구도 피하게 recentSent에 넣어 부름 */
+    fun retryMessage(a: Applicant, n: Int, recentSent: Collection<String>): String =
+        Templates.pick(Templates.DAANGN_RETRY, Random(seed(a.id, STEP_RETRY + n)), recentSent)
 
     /** 지원자·단계마다 정해지는 무작위 씨앗 */
     fun seed(applicantId: Long, step: String): Long = applicantId * 1_000_003L + step.hashCode()
@@ -120,7 +129,7 @@ object ReplyPlanner {
 
         // B3 마무리: 번호 받은 뒤 우리 쪽 당근 메시지가 있으면 이미 함
         val closeRandom = random(a, STEP_CLOSE)
-        val closeText = Templates.pick(Templates.DAANGN_AFTER_NUMBER, closeRandom, recent)
+        val closeText = Templates.pick(Templates.DAANGN_AFTER_NUMBER, closeRandom, recent) // closingMessage와 같은 순서로 뽑음
         val closeAt = SendTiming.afterReceived(gotAt, zone, closeRandom)
         val closed = messages.lastOrNull { it.channel == DAANGN && it.sender == OURS && it.time >= gotAt }
         if (closed == null) {
