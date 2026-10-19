@@ -1,23 +1,15 @@
 package com.kangsam.daangnrecruit.ui
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -38,13 +30,16 @@ import com.kangsam.daangnrecruit.Applicant
 import com.kangsam.daangnrecruit.reply.LiveGate
 import com.kangsam.daangnrecruit.reply.LiveReply
 import com.kangsam.daangnrecruit.reply.LiveSettings
+import com.kangsam.daangnrecruit.ui.theme.AppIcons
+import com.kangsam.daangnrecruit.ui.theme.AppText
+import com.kangsam.daangnrecruit.ui.theme.Palette
 
 /**
- * 지원자 탭의 '실제 발송 시험' 칸 (10/18 재걸: 테스트 폰 계정으로 첫 메시지 → 답 → 마무리를 한 번에 해 보고 끔).
- * 테스트 폰 당근 닉네임 · 모드(끔·연습·실제 발송) · 시험 대상 · 지금 하는 일 · '지금 한 번 확인' · 최근 결과. 접어 두면 한 줄.
+ * 지원자 탭의 '실제 발송 시험 (테스트 폰에만)' 칸 — 개발 중에만 있는 것 (화면 설계). 10/18 재걸: 테스트 폰 계정으로
+ * 첫 메시지 → 답 → 마무리를 한 번에 해 보고 끔. 테스트 폰 당근 닉네임 · 끔·연습·실제 발송 · 시험 대상 · 지금 하는 일 ·
+ * '지금 한 번 확인' · 최근 결과. 접어 두면 한 줄.
  * 언제 돌지는 reply/LiveReply, 보내도 되는지는 reply/LiveGate, 설정 값은 reply/LiveSettings
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LiveTestPanel(daangnOn: Boolean, applicants: List<Applicant>, modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -88,86 +83,85 @@ fun LiveTestPanel(daangnOn: Boolean, applicants: List<Applicant>, modifier: Modi
         !a.isSample && a.name.trim() == name.trim() && a !in targets
     }
 
-    OutlinedCard(modifier = modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth().clickable { open = !open },
-                verticalAlignment = Alignment.CenterVertically
+    DevCard(
+        title = "실제 발송 시험 (테스트 폰에만)",
+        subtitle = "지금: ${mode.label}" + (if (mode != LiveGate.Mode.OFF && name.isNotBlank()) " · '${name.trim()}'" else "") +
+            " · 당근 응대는 이 시험 대상에게만",
+        modifier = modifier,
+        onHeaderClick = { open = !open },
+        trailing = {
+            if (mode == LiveGate.Mode.LIVE) Pill("발송 중", Tone.RED, small = true)
+            Icon(
+                if (open) AppIcons.ChevronUp else AppIcons.ChevronDown,
+                contentDescription = if (open) "접기" else "펼치기",
+                tint = Palette.LineStrong,
+                modifier = Modifier.size(18.dp),
+            )
+        },
+    ) {
+        if (open) {
+            // 펼친 칸은 높이를 정해 두고 안에서 스크롤 (아래 지원자 목록이 밀려 안 보이지 않게)
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 380.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("실제 발송 시험 (테스트 폰에만)", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "테스트 폰 당근 닉네임과 이름이 같고 시험을 켠 뒤(앞 30분 포함) 들어온 지원에만 보내요. 기존 지원자에겐 안 보내요. " +
+                        "개발 중엔 '당근 응대'를 켜도 이 시험 대상에게만 보내고, '문자 응대'는 값만 저장돼요.\n" +
+                        "연습: 입력창에 쓰고 대조한 뒤 지움 (전송 안 함) · 실제 발송: 첫 메시지 → 번호가 틀리면 다시 요청(2번까지) → 번호를 받으면 마무리. 끝나면 '끔'.",
+                    style = AppText.Caption,
+                    color = Palette.Muted,
+                )
+                LabeledField(
+                    label = "테스트 폰 당근 닉네임",
+                    value = name,
+                    onValueChange = { v ->
+                        name = v
+                        LiveSettings.setTestName(context, v)
+                    },
+                    placeholder = "당근 닉네임 그대로",
+                )
+                Segmented(
+                    options = LiveGate.Mode.entries.map { it.label },
+                    selected = mode.label,
+                    onSelect = { label ->
+                        val m = LiveGate.Mode.entries.first { it.label == label }
+                        if (m == LiveGate.Mode.LIVE && mode != LiveGate.Mode.LIVE) askLive = true else change(m)
+                    },
+                    height = 40.dp,
+                )
+                val warnings = buildList {
+                    if (!daangnOn) add("'당근 응대'가 꺼져 있어서 돌지 않아요 — 위 스위치를 켜요")
+                    if (name.isBlank()) add("테스트 폰 닉네임을 넣어야 돌아요")
+                    if (sameName > 0) add("이 이름의 기존 지원자가 ${sameName}명 있어요 — 그 사람에겐 안 보내지만, 이름이 겹치면 카드·방을 못 골라 멈출 수 있어요")
+                }
+                warnings.forEach { NoteBox(it, Tone.RED) }
+                if (mode != LiveGate.Mode.OFF && armedAt > 0) {
                     Text(
-                        "지금: ${mode.label}" + (if (mode != LiveGate.Mode.OFF && name.isNotBlank()) " · '${name.trim()}'" else ""),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (mode == LiveGate.Mode.LIVE) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                        "켠 때 ${formatTime(armedAt)} — 그 30분 전부터 들어온 지원만 대상 · 시험 중엔 이 화면을 띄워 두세요 (화면이 안 꺼지게 해 둠)",
+                        style = AppText.Caption,
+                        color = Palette.Muted,
                     )
                 }
-                Text(if (open) "접기" else "펼치기", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-            }
-            if (open) {
-                // 펼친 칸은 높이를 정해 두고 안에서 스크롤 (아래 지원자 목록이 밀려 안 보이지 않게)
-                Column(modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "테스트 폰 당근 닉네임과 이름이 같고 시험을 켠 뒤(앞 30분 포함) 들어온 지원에만 보내요. 기존 지원자에겐 안 보내요.\n" +
-                            "연습: 입력창에 쓰고 대조한 뒤 지움 (전송 안 함) · 실제 발송: 첫 메시지 → 번호가 틀리면 다시 요청(2번까지) → 번호를 받으면 마무리. 끝나면 '끔'.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                Text(
+                    if (targets.isEmpty()) "시험 대상: 없음 (테스트 폰으로 지원하면 알림으로 들어와요)"
+                    else "시험 대상: " + targets.joinToString(", ") { "${it.name} (${it.status})" },
+                    style = AppText.Small,
+                    color = Palette.Ink,
+                )
+                if (status.isNotBlank()) Text("하는 일: $status", style = AppText.Small, color = Palette.Ink)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AppButton(
+                        "지금 한 번 확인",
+                        onClick = { LiveReply.checkNow(context) },
+                        enabled = mode != LiveGate.Mode.OFF,
+                        height = 40.dp,
+                        textStyle = AppText.SmallStrong,
                     )
-                    Spacer(Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = name,
-                        onValueChange = { v ->
-                            name = v
-                            LiveSettings.setTestName(context, v)
-                        },
-                        label = { Text("테스트 폰 당근 닉네임") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        LiveGate.Mode.entries.forEach { m ->
-                            FilterChip(
-                                selected = mode == m,
-                                onClick = { if (m == LiveGate.Mode.LIVE && mode != LiveGate.Mode.LIVE) askLive = true else change(m) },
-                                label = { Text(m.label) }
-                            )
-                        }
-                    }
-                    val warnings = buildList {
-                        if (!daangnOn) add("'당근 응대'가 꺼져 있어서 돌지 않아요 — 위 스위치를 켜요")
-                        if (name.isBlank()) add("테스트 폰 닉네임을 넣어야 돌아요")
-                        if (sameName > 0) add("이 이름의 기존 지원자가 ${sameName}명 있어요 — 그 사람에겐 안 보내지만, 이름이 겹치면 카드·방을 못 골라 멈출 수 있어요")
-                    }
-                    warnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
-                    if (mode != LiveGate.Mode.OFF && armedAt > 0) {
-                        Text(
-                            "켠 때 ${formatTime(armedAt)} — 그 30분 전부터 들어온 지원만 대상 · 시험 중엔 이 화면을 띄워 두세요 (화면이 안 꺼지게 해 둠)",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Text(
-                        if (targets.isEmpty()) "시험 대상: 없음 (테스트 폰으로 지원하면 알림으로 들어와요)"
-                        else "시험 대상: " + targets.joinToString(", ") { "${it.name} (${it.status})" },
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    if (status.isNotBlank()) Text("하는 일: $status", style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(4.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedButton(onClick = { LiveReply.checkNow(context) }, enabled = mode != LiveGate.Mode.OFF) {
-                            Text("지금 한 번 확인")
-                        }
-                        TextButton(onClick = { showLog = !showLog }) { Text(if (showLog) "기록 닫기" else "마지막 기록") }
-                    }
-                    results.take(6).forEach { Text(it, style = MaterialTheme.typography.labelSmall) }
-                    if (showLog) {
-                        lastLog.takeLast(40).forEach {
-                            Text("· $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
+                    TextAction(if (showLog) "기록 닫기" else "마지막 기록", onClick = { showLog = !showLog })
                 }
+                results.take(6).forEach { Text(it, style = AppText.Mono, color = Palette.Ink2) }
+                if (showLog) lastLog.takeLast(40).forEach { Text("· $it", style = AppText.Mono, color = Palette.Muted2) }
             }
         }
     }
@@ -175,17 +169,22 @@ fun LiveTestPanel(daangnOn: Boolean, applicants: List<Applicant>, modifier: Modi
     if (askLive) {
         AlertDialog(
             onDismissRequest = { askLive = false },
-            title = { Text("실제 발송으로 바꿀까요?") },
+            title = { Text("실제 발송으로 바꿀까요?", style = AppText.Section, color = Palette.Ink) },
             text = {
-                Text("테스트 폰 '${name.trim()}' 지원자에게 당근 메시지를 실제로 보내요. 기존 지원자에겐 안 보내요. 시험이 끝나면 '끔'으로 바꿔요.")
+                Text(
+                    "테스트 폰 '${name.trim()}' 지원자에게 당근 메시지를 실제로 보내요. 기존 지원자에겐 안 보내요. 시험이 끝나면 '끔'으로 바꿔요.",
+                    style = AppText.Body,
+                    color = Palette.Ink2,
+                )
             },
             confirmButton = {
                 TextButton(onClick = {
                     askLive = false
                     change(LiveGate.Mode.LIVE)
-                }, enabled = name.isNotBlank()) { Text("실제 발송") }
+                }, enabled = name.isNotBlank()) { Text("실제 발송", style = AppText.BodyStrong, color = Palette.Red) }
             },
-            dismissButton = { TextButton(onClick = { askLive = false }) { Text("취소") } }
+            dismissButton = { TextButton(onClick = { askLive = false }) { Text("취소", style = AppText.BodyStrong, color = Palette.Ink2) } },
+            containerColor = Palette.Surface,
         )
     }
 }

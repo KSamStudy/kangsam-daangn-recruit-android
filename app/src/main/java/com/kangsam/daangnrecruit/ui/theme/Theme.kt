@@ -1,58 +1,53 @@
 package com.kangsam.daangnrecruit.ui.theme
 
-import android.app.Activity
-import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
-)
-
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+/**
+ * 앱 테마: 화면 시안의 색으로 고정 (폰 배경화면 색을 따라가는 동적 색·어두운 테마는 안 씀 — 시안이 밝은 화면 하나라서).
+ * Material 부품(입력칸 커서, 대화상자, 메뉴, 알림 띠)이 시안 색으로 보이게 색 이름을 맞춤
+ */
+private val AppColors = lightColorScheme(
+    primary = Palette.Green,
+    onPrimary = Palette.Surface,
+    primaryContainer = Palette.GreenSoft,
+    onPrimaryContainer = Palette.GreenDark,
+    secondary = Palette.Ink2,
+    onSecondary = Palette.Surface,
+    secondaryContainer = Palette.GraySoft,
+    onSecondaryContainer = Palette.Ink,
+    tertiary = Palette.Purple,
+    onTertiary = Palette.Surface,
+    background = Palette.Bg,
+    onBackground = Palette.Ink,
+    surface = Palette.Surface,
+    onSurface = Palette.Ink,
+    surfaceVariant = Palette.Bg,
+    onSurfaceVariant = Palette.Muted,
+    surfaceTint = Palette.Surface,
+    inverseSurface = Palette.Ink,
+    inverseOnSurface = Palette.Surface,
+    error = Palette.Red,
+    onError = Palette.Surface,
+    errorContainer = Palette.RedSoft,
+    onErrorContainer = Palette.Red,
+    outline = Palette.LineButton,
+    outlineVariant = Palette.Line,
+    surfaceBright = Palette.Surface,
+    surfaceDim = Palette.Bg,
+    surfaceContainerLowest = Palette.Surface,
+    surfaceContainerLow = Palette.Surface,
+    surfaceContainer = Palette.Surface,
+    surfaceContainerHigh = Palette.Surface,
+    surfaceContainerHighest = Palette.Bg,
 )
 
 @Composable
-fun KangsamDaangnRecruitTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
-    content: @Composable () -> Unit
-) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
-
+fun KangsamDaangnRecruitTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
+        colorScheme = AppColors,
+        typography = AppTypography,
+        content = content,
     )
 }

@@ -193,6 +193,10 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE applicantId = :applicantId ORDER BY time")
     fun observeFor(applicantId: Long): Flow<List<Message>>
 
+    /** 이 시각 뒤의 대화 (최근 것부터 — 홈 '오늘'·'최근 활동') */
+    @Query("SELECT * FROM messages WHERE time >= :since ORDER BY time DESC")
+    fun observeSince(since: Long): Flow<List<Message>>
+
     /** 한 지원자의 대화를 한 번 읽음 (오래된 것부터 — 첫 메시지 드라이런) */
     @Query("SELECT * FROM messages WHERE applicantId = :applicantId ORDER BY time")
     suspend fun listFor(applicantId: Long): List<Message>

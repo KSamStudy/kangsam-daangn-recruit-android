@@ -64,14 +64,24 @@
 
 ## `ui/` — 화면
 
+화면은 프로젝트 문서 '화면 설계 v0.7'과 화면 시안 v0.7에 맞춤. 색·글꼴·아이콘·공통 부품을 한 곳에 모아 두고, 화면 파일은 그걸 가져다 씀 (색이나 버튼 모양을 바꿀 땐 `theme/`·`Components.kt`만).
+
 | 파일 | 화면 |
 |---|---|
-| `AppRoot.kt` | 아래 탭 5개 |
-| `ApplicantsScreen.kt` · `ApplicantDetailScreen.kt` | 지원자 목록 (위 공고 칸 → 처리할 것 · 확인 필요 · 넘김) · 지원자 상세 (정보, 다음에 앱이 할 일, 드라이런, 대화) |
-| `LiveTestPanel.kt` | 지원자 탭의 '실제 발송 시험' 칸 (닉네임 · 끔·연습·실제 발송 · 지금 한 번 확인 · 결과) |
-| `CheckScreen.kt` | 확인 필요 (보류·담당자 확인 카드) |
-| `PostsScreen.kt` · `PostEditScreen.kt` | 상시 공고 · 공고 편집 |
-| `Screens.kt` · `NotificationLogScreen.kt` | 홈·설정 (당근 가져오기), 알림 기록 (개발용) |
+| `AppRoot.kt` | 앱 틀: 아래 탭 5개 (확인 탭에 확인 필요 건수), 탭 안에서 들어가는 화면 (지원자 상세·공고 편집·알림 기록 — 열리면 아래 탭을 숨김), 버튼 결과 한 줄 (화면 아래 띠). 탭마다 스크롤·고른 칸을 기억 |
+| `HomeScreen.kt` | 홈 (앱 상태, 기능 3개, 오늘 건수, 최근 24시간 활동). 한 줄씩 만드는 규칙은 같은 파일의 `HomeSummary` |
+| `ApplicantsScreen.kt` · `ApplicantDetailScreen.kt` | 지원자 목록 (스위치 2개 → 공고 칸 → 처리할 것 · 확인 필요 · 넘김) · 지원자 상세 (정보, 날짜별 대화, 지금 상태와 다음에 앱이 할 일, 직접 연락하기, 드라이런) |
+| `LiveTestPanel.kt` | 지원자 탭의 '실제 발송 시험' 칸 (개발용 — 닉네임 · 끔·연습·실제 발송 · 지금 한 번 확인 · 결과) |
+| `CheckScreen.kt` | 확인 필요 (합치기 확인 · 공고 못 찾음 · 담당자 확인 · 공고 쪽 카드) |
+| `PostsScreen.kt` · `PostEditScreen.kt` | 상시 공고 (자동 게시 스위치, 공고 카드, 직접 올린 공고 등록) · 공고 편집 (문구, 게시 규칙, 켜기 전 확인, 미리보기) |
+| `SettingsScreen.kt` | 설정 (전체 멈춤, 당근 가져오기, 1차 값 — 값을 고치는 곳은 아직 없음) |
+| `NotificationLogScreen.kt` | 알림 기록 (개발용 — 권한·스위치, 오류 기록, 예시 데이터 넣기·지우기, 최근 알림) |
+| `Components.kt` | 여러 화면이 같이 쓰는 부품 (카드, 상태 표시, 스위치, 버튼, 필터, 위 줄, 입력 칸 등). 지원자 상태 색은 `statusTone` 한 곳에서 정함 |
+| `Format.kt` | 시각·날짜 글자 (10/19 14:05, 10월 19일 (월)), 공고 이름 줄임, 조사 '(으)로·와/과' |
+| `theme/Color.kt` · `theme/Type.kt` · `theme/Theme.kt` | 시안의 색 값 (`Palette`), 글자 크기·굵기 (`AppText`, IBM Plex Sans KR), 앱 테마 (밝은 화면 하나) |
+| `theme/AppIcons.kt` | 선 아이콘 (아래 탭·화살표·자물쇠 등 — 시안과 같은 Tabler 아이콘 모양) |
+
+글꼴 파일은 `app/src/main/res/font/` (IBM Plex Sans KR 4굵기, OFL 라이선스 — 앱에 넣어 배포 가능).
 
 ## 알림 하나가 들어오면
 
