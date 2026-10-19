@@ -22,7 +22,9 @@ import com.kangsam.daangnrecruit.reply.FirstMessageDryRun
 import com.kangsam.daangnrecruit.reply.LiveGate
 import com.kangsam.daangnrecruit.reply.LiveReply
 import com.kangsam.daangnrecruit.reply.LiveTurn
+import com.kangsam.daangnrecruit.sync.AccountSync
 import com.kangsam.daangnrecruit.sync.DaangnSync
+import com.kangsam.daangnrecruit.sync.DaangnWalker
 import com.kangsam.daangnrecruit.sync.ScreenChatRoom
 import com.kangsam.daangnrecruit.sync.ScreenDriver
 import com.kangsam.daangnrecruit.sync.ScreenImport
@@ -109,7 +111,8 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
         lastSignature = signature
         lastReadAt = now
         ioScope.launch {
-            runCatching { ScreenImport.save(AppDatabase.get(applicationContext), screen, ZoneId.systemDefault()) }
+            val db = DbOpen.db(applicationContext) ?: return@launch // DB를 못 열었으면 안 씀 (DbOpen)
+            runCatching { ScreenImport.save(db, screen, ZoneId.systemDefault()) }
                 .onSuccess { message ->
                     DaangnSync.saveLast(applicationContext, message)
                     Log.i(TAG, message)
@@ -121,7 +124,8 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
 
     /** 화면에서 가져온 지난 대화로 연락처가 빈 지원자의 번호를 채움 (응대 B3 — 상태는 안 바꿈) */
     private suspend fun fillPhones() {
-        runCatching { ContactFlow.fillFromHistory(AppDatabase.get(applicationContext)) }
+        val db = DbOpen.db(applicationContext) ?: return
+        runCatching { ContactFlow.fillFromHistory(db) }
             .onSuccess { lines -> lines.forEach { Log.i(TAG, "지난 대화에서 번호: $it") } }
             .onFailure { saveError("지난 대화에서 번호 채우기", it) }
     }
@@ -131,8 +135,13 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
     fun runSync(onDone: (String, List<String>) -> Unit) {
         driving = true
         mainScope.launch {
+            val db = DbOpen.db(applicationContext) ?: run {
+                driving = false
+                onDone(DB_CLOSED, emptyList())
+                return@launch
+            }
             showBanner(SYNC_BANNER)
-            val runner = SyncRunner(this@DaangnAccessibilityService, AppDatabase.get(applicationContext), ZoneId.systemDefault(),
+            val runner = SyncRunner(this@DaangnAccessibilityService, db, ZoneId.systemDefault(),
                 say = { line ->
                     DaangnSync.say(line)
                     banner?.text = "$SYNC_BANNER\n$line"
@@ -144,6 +153,16 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
             }
             hideBanner()
             driving = false
+            onAlarm(db, runner.alarm)
+            // 계정 맞추기: 닉네임이 다르면 '닉네임 다름'을 남겨 가져오기·사람이 연 화면 맞추기를 멈춤, 맞췄으면 풂
+            when (val acc = runner.account) {
+                is AccountSync.Result.Mismatch -> {
+                    DaangnSync.setNicknameMismatch(applicationContext, acc.seen)
+                    AppAlerts.nicknameMismatch(applicationContext, acc.seen) // 가져오기 멈춤 + 알림 (사용자 프로세스 C2)
+                }
+                is AccountSync.Result.Matched, is AccountSync.Result.Registered -> DaangnSync.setNicknameMismatch(applicationContext, null)
+                else -> {}
+            }
             onDone(result, runner.log)
             ioScope.launch { fillPhones() }
         }
@@ -154,8 +173,13 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
     fun runDryRun(applicantId: Long, onDone: (String, List<String>) -> Unit) {
         driving = true
         mainScope.launch {
+            val db = DbOpen.db(applicationContext) ?: run {
+                driving = false
+                onDone(DB_CLOSED, emptyList())
+                return@launch
+            }
             showBanner(DRY_BANNER)
-            val runner = FirstMessageDryRun(this@DaangnAccessibilityService, AppDatabase.get(applicationContext), applicantId,
+            val runner = FirstMessageDryRun(this@DaangnAccessibilityService, db, applicantId,
                 say = { line ->
                     DaangnReply.say(line)
                     banner?.text = "$DRY_BANNER\n$line"
@@ -167,6 +191,7 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
             }
             hideBanner()
             driving = false
+            onAlarm(db, runner.alarm)
             onDone(result, runner.log)
         }
     }
@@ -176,9 +201,14 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
     fun runLiveTurn(applicantId: Long, config: LiveGate.Config, onDone: (String, List<String>, LiveTurn.Outcome) -> Unit) {
         driving = true
         mainScope.launch {
+            val db = DbOpen.db(applicationContext) ?: run {
+                driving = false
+                onDone(DB_CLOSED, emptyList(), LiveTurn.Outcome.STOPPED)
+                return@launch
+            }
             val title = if (config.mode == LiveGate.Mode.LIVE) LIVE_BANNER else REHEARSAL_BANNER
             showBanner(title)
-            val turn = LiveTurn(this@DaangnAccessibilityService, AppDatabase.get(applicationContext), config, applicantId,
+            val turn = LiveTurn(this@DaangnAccessibilityService, db, config, applicantId,
                 say = { line ->
                     LiveReply.say(line)
                     banner?.text = "$title\n$line"
@@ -192,6 +222,7 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
             }
             hideBanner()
             driving = false
+            onAlarm(db, turn.alarm)
             onDone(result, turn.log, if (failed) LiveTurn.Outcome.STOPPED else turn.outcome)
         }
     }
@@ -361,11 +392,26 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
         return Snapshot(nodes, refs)
     }
 
+    /**
+     * 당근을 다루다 멈춤 글자(보안 인증·이용 제한 등)를 봤으면: 전체 멈춤 + 계정 상태 기록(경고·정지) + 앱 알림
+     * (사용자 프로세스 '예외 처리', 점검 P1-7 — 전에는 실제 발송 시험만 끔). 다시 시작은 사람이 설정에서
+     */
+    private fun onAlarm(db: AppDatabase, stop: DaangnWalker.Stop?) {
+        stop ?: return
+        FeatureSettings.set(applicationContext, FeatureSettings.ALL_STOP, true)
+        AppAlerts.allStop(applicationContext, stop.word, stop.notice)
+        ioScope.launch {
+            runCatching { Safety.record(db, Safety.currentAccount(db), stop.word, stop.notice, System.currentTimeMillis()) }
+                .onSuccess { e -> Log.w(TAG, "전체 멈춤 — '${stop.word}'" + (e?.let { " · 계정 상태 기록 '${it.kind}'" } ?: " · 계정이 없어 기록 없음")) }
+                .onFailure { saveError("계정 상태 기록", it) }
+        }
+    }
+
     private fun saveError(place: String, e: Throwable) {
         Log.e(TAG, "$place 오류", e)
         ioScope.launch {
             runCatching {
-                AppDatabase.get(applicationContext).errorLogDao().insert(
+                DbOpen.db(applicationContext)?.errorLogDao()?.insert(
                     ErrorLog(time = System.currentTimeMillis(), place = place, message = e.message ?: e.javaClass.simpleName)
                 )
             }
@@ -383,6 +429,7 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
         private const val DRY_BANNER = "첫 메시지 드라이런 중 (입력·전송 안 함) — 폰을 만지지 마세요 (멈추려면 홈 버튼)"
         private const val LIVE_BANNER = "실제 발송 시험 중 (테스트 폰 지원자에게만) — 폰을 만지지 마세요 (멈추려면 홈 버튼)"
         private const val REHEARSAL_BANNER = "발송 연습 중 (입력하고 지움 · 전송 안 함) — 폰을 만지지 마세요 (멈추려면 홈 버튼)"
+        private const val DB_CLOSED = "안 돎 — 앱 기록(DB)을 못 열어 전체 멈춤 중이에요 (앱 첫 화면 안내)"
 
         /** 지금 켜져 있는 서비스 (꺼져 있으면 null) — '당근에서 가져오기' 버튼이 씀 */
         @Volatile

@@ -33,6 +33,7 @@ import com.kangsam.daangnrecruit.reply.LiveSettings
 import com.kangsam.daangnrecruit.ui.theme.AppIcons
 import com.kangsam.daangnrecruit.ui.theme.AppText
 import com.kangsam.daangnrecruit.ui.theme.Palette
+import kotlinx.coroutines.delay
 
 /**
  * 지원자 탭의 '실제 발송 시험 (테스트 폰에만)' 칸 — 개발 중에만 있는 것 (화면 설계). 10/18 재걸: 테스트 폰 계정으로
@@ -61,6 +62,16 @@ fun LiveTestPanel(daangnOn: Boolean, applicants: List<Applicant>, modifier: Modi
         armedAt = LiveSettings.armedAt(context)
     }
 
+    // 켜진 채 닉네임(앱이 맡은 지원)이 바뀌면 처리 전 메시지를 맞춤 — 글자를 치는 동안은 기다림
+    // (반쯤 친 이름으로 맞추면 시험 대상의 처리 전 메시지가 '넘김'으로 바뀌어 되돌릴 수 없어서)
+    var settledName by remember { mutableStateOf(name) }
+    LaunchedEffect(name) {
+        if (name == settledName) return@LaunchedEffect
+        delay(1_500)
+        settledName = name
+        if (mode != LiveGate.Mode.OFF) LiveReply.settleLater(context)
+    }
+
     // 시험이 켜져 있는 동안 이 화면을 띄워 두면 폰 화면이 안 꺼짐 (꺼지면 앱이 당근을 못 다룸 — 폰 설정은 안 바꾸고 이 화면에만)
     val view = LocalView.current
     DisposableEffect(mode) {
@@ -73,6 +84,7 @@ fun LiveTestPanel(daangnOn: Boolean, applicants: List<Applicant>, modifier: Modi
         mode = m
         armedAt = LiveSettings.armedAt(context)
         if (m == LiveGate.Mode.OFF) LiveReply.cancelAll()
+        LiveReply.settleLater(context) // 맡은 지원이 바뀜 → 앱이 응대하지 않게 된 지원자의 처리 전 메시지는 넘김으로
         // 실제 발송으로 바꾸면 기다리던 시험 대상(연습한 지원 등)에게 바로 이어서 (대상이 없으면 안내만)
         if (m == LiveGate.Mode.LIVE) LiveReply.checkNow(context)
     }
@@ -117,7 +129,7 @@ fun LiveTestPanel(daangnOn: Boolean, applicants: List<Applicant>, modifier: Modi
                     value = name,
                     onValueChange = { v ->
                         name = v
-                        LiveSettings.setTestName(context, v)
+                        LiveSettings.setTestName(context, v) // 처리 전 메시지 맞추기는 위 LaunchedEffect(name) — 치기를 멈춘 뒤
                     },
                     placeholder = "당근 닉네임 그대로",
                 )
@@ -181,7 +193,7 @@ fun LiveTestPanel(daangnOn: Boolean, applicants: List<Applicant>, modifier: Modi
                 TextButton(onClick = {
                     askLive = false
                     change(LiveGate.Mode.LIVE)
-                }, enabled = name.isNotBlank()) { Text("실제 발송", style = AppText.BodyStrong, color = Palette.Red) }
+                }, enabled = name.isNotBlank()) { Text("실제 발송", style = AppText.BodyStrong, color = if (name.isNotBlank()) Palette.Red else Palette.Placeholder) }
             },
             dismissButton = { TextButton(onClick = { askLive = false }) { Text("취소", style = AppText.BodyStrong, color = Palette.Ink2) } },
             containerColor = Palette.Surface,

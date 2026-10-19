@@ -51,18 +51,32 @@ object ReplyPlanner {
     /** 계획: 지금 단계 한 줄 · 보낼 것들 · 참고 */
     data class Plan(val step: String, val sends: List<Send>, val notes: List<String>)
 
-    /** recentSent = 앱이 최근에 보낸 문구들 (같은 문구를 피하려고) */
-    fun plan(a: Applicant, messages: List<Message>, recentSent: Collection<String>, switches: Switches, zone: ZoneId): Plan =
+    /** 앱이 맡지 않은 지원이라 안 보내는 이유 (사용자 프로세스 B2 — 앱은 '당근 응대'를 켠 뒤 들어온 지원만 맡음) */
+    const val NOT_OWNED = "앱이 맡지 않은 지원 — 사람이 응대 (개발 중엔 실제 발송 시험 대상만 앱이 맡음)"
+
+    /**
+     * recentSent = 앱이 최근에 보낸 문구들 (같은 문구를 피하려고).
+     * owns = 앱이 맡은 지원인지 (ReplyScope.owns) — 안 맡았으면 보낼 것은 계획만 보이고 '지금은 안 보냄'에 그 이유
+     */
+    fun plan(
+        a: Applicant,
+        messages: List<Message>,
+        recentSent: Collection<String>,
+        switches: Switches,
+        zone: ZoneId,
+        owns: Boolean = true,
+    ): Plan =
         when (a.status) {
-            ApplicantStatus.NEW -> firstPlan(a, messages, recentSent, switches, zone)
+            ApplicantStatus.NEW -> firstPlan(a, messages, recentSent, switches, zone, owns)
             ApplicantStatus.FIRST_SENT -> Plan(
                 "B3 번호 받기 — 지원자 답을 기다림", emptyList(),
-                listOf(
+                listOfNotNull(
+                    if (!owns) "$NOT_OWNED — 지원자 답은 '넘김'으로 남음" else null,
                     "지원자가 번호를 보내면 알림으로 받아 연락처를 저장하고 '연락처 확보'로 (알림 메시지는 '당근 가져오기'가 켜져 있을 때 기록)",
                     "질문만 오면 짧은 답·번호 다시 요청, 답이 없으면 '미응답' — 아직 만들지 않음",
                 ),
             )
-            ApplicantStatus.CONTACT -> contactPlan(a, messages, recentSent, switches, zone)
+            ApplicantStatus.CONTACT -> contactPlan(a, messages, recentSent, switches, zone, owns)
             ApplicantStatus.SMS, ApplicantStatus.TIME -> Plan(
                 "B4-2 문자 응대 — 아직 만들지 않음", emptyList(),
                 listOf("받은 답을 보고 다음 문자를 정하는 일(가리기·LLM 판단)은 다음 단계"),
@@ -97,13 +111,14 @@ object ReplyPlanner {
 
     // ---------- 새 지원 → B2 당근 첫 메시지
 
-    private fun firstPlan(a: Applicant, messages: List<Message>, recent: Collection<String>, sw: Switches, zone: ZoneId): Plan {
+    private fun firstPlan(a: Applicant, messages: List<Message>, recent: Collection<String>, sw: Switches, zone: ZoneId, owns: Boolean): Plan {
         val random = random(a, STEP_FIRST)
         val text = Templates.pick(Templates.DAANGN_FIRST, random, recent) // firstMessage와 같은 순서로 뽑음
         val at = SendTiming.afterReceived(a.appliedAt, zone, random)
         val problems = ReplyRules.check(text)
         val blocked = listOfNotNull(
             allStop(sw),
+            if (!owns) NOT_OWNED else null,
             ReplyRules.firstMessageBlock(a, messages),
             if (!sw.daangnReply) "'당근 응대'가 꺼져 있음" else null,
             failed(problems),
@@ -112,7 +127,7 @@ object ReplyPlanner {
             "B2 당근 첫 메시지 — 번호 요청",
             listOf(Send(DAANGN, "첫 메시지", text, at, a.appliedAt, "지원", problems, blocked)),
             listOf(
-                "당근에 보내는 기능은 아직 없음 — 지금은 드라이런으로 채팅방까지 가서 확인만",
+                "당근으로 보내는 건 지금은 실제 발송 시험 대상에게만 (운영은 담당자 확인 뒤 — 확인사항 29)",
                 "채팅방이 아직 없는 새 지원자는 지원서를 열어 '채팅하기'로 방을 만들어야 함 — 담당자 확인 전 (확인사항 5)",
             ),
         )
@@ -120,9 +135,9 @@ object ReplyPlanner {
 
     // ---------- 연락처 확보 → B3 당근 마무리 1회 + B4 첫 문자
 
-    private fun contactPlan(a: Applicant, messages: List<Message>, recent: Collection<String>, sw: Switches, zone: ZoneId): Plan {
+    private fun contactPlan(a: Applicant, messages: List<Message>, recent: Collection<String>, sw: Switches, zone: ZoneId, owns: Boolean): Plan {
         val gotAt = numberTime(a, messages)
-        val who = ReplyRules.notAutoReason(a)
+        val who = if (!owns) NOT_OWNED else ReplyRules.notAutoReason(a)
         val staff = ReplyRules.staffMessages(messages)
         val sends = mutableListOf<Send>()
         val notes = mutableListOf<String>()
@@ -165,7 +180,7 @@ object ReplyPlanner {
         } else {
             notes += "첫 문자는 이미 보냄"
         }
-        notes += "당근·문자로 보내는 기능은 아직 없음 — 무엇을 언제 보낼지 계획만 보여 줌"
+        notes += "문자로 보내는 기능은 아직 없음, 당근 마무리는 실제 발송 시험 대상에게만 — 그 밖엔 무엇을 언제 보낼지 계획만 보여 줌"
         return Plan("B3 번호 받음 → 당근 마무리 1회 · B4 첫 문자", sends, notes)
     }
 

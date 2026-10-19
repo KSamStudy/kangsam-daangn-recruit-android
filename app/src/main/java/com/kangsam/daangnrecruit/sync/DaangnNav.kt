@@ -65,6 +65,10 @@ object DaangnNav {
     fun stopWord(nodes: List<UiNode>): String? =
         nodes.firstNotNullOfOrNull { n -> STOP_WORDS.firstOrNull { n.text.contains(it) } }
 
+    /** 멈춤 글자가 든 칸의 글 전체 (당근 안내 문구 — 계정 상태 기록에 그대로 남김, 200자까지) */
+    fun stopNotice(nodes: List<UiNode>): String =
+        nodes.firstOrNull { n -> STOP_WORDS.any { n.text.contains(it) } }?.text?.trim()?.take(200).orEmpty()
+
     /** 아래 탭(홈·커뮤니티·동네지도·채팅·나의 당근)이 있는 화면인지 */
     fun hasBottomNav(nodes: List<UiNode>): Boolean = nodes.any { it.viewId.endsWith("bottomNavCompose") }
 

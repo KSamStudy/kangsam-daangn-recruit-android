@@ -29,6 +29,14 @@ class SyncRunner(
 ) {
     /** 한 번 돌며 한 일 (설정 탭 '지난 실행 기록') */
     val log = mutableListOf<String>()
+
+    /** 멈춤 글자(보안 인증·이용 제한 등)로 멈췄으면 그 멈춤 — 접근성 서비스가 전체 멈춤 + 계정 상태 기록 (Safety) */
+    var alarm: DaangnWalker.Stop? = null
+        private set
+
+    /** 계정 맞추기 결과 (나의 당근 닉네임 — 닉네임이 다르면 접근성 서비스가 '닉네임 다름'을 남김) */
+    var account: AccountSync.Result? = null
+        private set
     private val results = mutableListOf<String>()
     private val w = DaangnWalker(driver, ::note, random)
 
@@ -43,6 +51,7 @@ class SyncRunner(
             tidyChatList()
             "끝 — " + results.joinToString(" / ")
         } catch (e: DaangnWalker.Stop) {
+            if (e.alarm) alarm = e
             note("멈춤: ${e.message}")
             w.keepScreen("stopped")
             "멈춤: ${e.message}" + (if (results.isNotEmpty()) " (그 전까지: ${results.joinToString(" / ")})" else "")
@@ -61,6 +70,7 @@ class SyncRunner(
         w.tab(start, "나의 당근", DaangnPage.MY_PAGE)
         // 공고 카드는 화면 틀보다 늦게 뜸 → 뜰 때까지 기다림 (공고가 없으면 끝내 안 뜸)
         var myPage = w.loaded(DaangnPage.MY_PAGE) { DaangnNav.myPostCards(it.nodes).isNotEmpty() }
+        matchAccount(myPage)
         val titles = DaangnNav.myPostCards(myPage.nodes).map { it.second }.distinct()
         if (titles.isEmpty()) {
             results.add("나의 당근에 진행중인 구인 공고가 안 보여 공고·지원자는 건너뜀")
@@ -86,6 +96,28 @@ class SyncRunner(
             myPage = w.expect(DaangnPage.MY_PAGE)
         }
         return myPage
+    }
+
+    /**
+     * 계정 맞추기 (DB 설계 '계정' — 나의 당근 닉네임): 앱에 계정이 없으면 등록, 같으면 그 계정, 다르면 멈춤.
+     * 닉네임을 못 읽으면(당근 화면이 바뀜 등) 위쪽 글자를 기록에, 화면을 폰 안(files/debug/my_page.xml)에 남기고 그대로 감
+     */
+    private suspend fun matchAccount(myPage: Snapshot) {
+        val nick = MyPageParser.nickname(myPage.nodes)
+        if (nick == null) {
+            note("나의 당근 위쪽 글자 (닉네임을 못 읽음): ${MyPageParser.topTexts(myPage.nodes).joinToString(" / ")}")
+            w.keepScreen("my_page", myPage)
+        }
+        val r = AccountSync.sync(db, nick)
+        account = r
+        when (r) {
+            is AccountSync.Result.Registered -> results.add("계정 등록 '${r.account.nickname}'")
+            is AccountSync.Result.Matched -> note("계정 '${r.account.alias}'")
+            is AccountSync.Result.Mismatch -> throw DaangnWalker.Stop(
+                "나의 당근 닉네임('${r.seen}')이 앱 계정(${r.known.joinToString(", ")})과 달라 멈췄어요 — 설정 '계정'에서 정해 주세요"
+            )
+            AccountSync.Result.NoNickname -> results.add("나의 당근 닉네임을 못 읽어 계정은 안 맞춤 (화면을 남김)")
+        }
     }
 
     /**
@@ -212,7 +244,7 @@ class SyncRunner(
             w.keepScreen("chat_room", first)
             return "채팅방 위쪽을 못 읽음"
         }
-        if (db.applicantDao().findByTitleAndName(header.postTitle, header.name).isEmpty()) {
+        if (ChatImport.applicantFor(db, header) == null) {
             return "'${header.name}' 방 — '${header.postTitle}' 지원자가 앱에 없어 건너뜀"
         }
         var items = ChatRoomParser.window(first.nodes)

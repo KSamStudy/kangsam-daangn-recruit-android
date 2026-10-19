@@ -2,12 +2,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- 앱 알림 (전체 멈춤·기록 문제 — AppAlerts): Android 13부터 사람이 허용해야 보임 (첫 화면에서 한 번 물음) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- 당근 가져오기(프로세스 C)가 당근 앱을 열기 위해: Android 11부터 다른 앱을 찾으려면 여기에 적어야 함 -->
     <queries>
         <package android:name="com.towneers.www" />
     </queries>
 
+    <!-- KangsamApp: 앱이 켜질 때 한 번 (순수 코드가 앱 설정을 읽는 법을 넣음 — 앱이 맡은 지원) -->
     <application
+        android:name=".KangsamApp"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"

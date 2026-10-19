@@ -41,10 +41,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kangsam.daangnrecruit.AppDatabase
 import com.kangsam.daangnrecruit.Applicant
+import com.kangsam.daangnrecruit.ApplicantStore
 import com.kangsam.daangnrecruit.ApplicantStatus
 import com.kangsam.daangnrecruit.ApplicantView
 import com.kangsam.daangnrecruit.Message
 import com.kangsam.daangnrecruit.reply.DaangnReply
+import com.kangsam.daangnrecruit.reply.MessageCare
 import com.kangsam.daangnrecruit.reply.ReplyPlanner
 import com.kangsam.daangnrecruit.reply.ReplyRules
 import com.kangsam.daangnrecruit.reply.Templates
@@ -405,8 +407,9 @@ private fun NowStateCard(a: Applicant, messages: List<Message>) {
         recent = db.messageDao().recentByMethod(ReplyRules.SENT_BY_APP, Templates.RECENT_TO_AVOID).map { it.content }
     }
     val avoid = recent
-    val plan = remember(a, messages, avoid) {
-        avoid?.let { ReplyPlanner.plan(a, messages, it, DaangnReply.switches(context), ZoneId.systemDefault()) }
+    val owned = appOwns(a)
+    val plan = remember(a, messages, avoid, owned) {
+        avoid?.let { ReplyPlanner.plan(a, messages, it, DaangnReply.switches(context), ZoneId.systemDefault(), owned) }
     }
 
     // 색: 문자 단계 보라 · 넘김 초록 · 사람이 볼 것 노랑 · 당근 단계 흰 바탕 · 끝 회색
@@ -423,7 +426,7 @@ private fun NowStateCard(a: Applicant, messages: List<Message>) {
     AppCard(radius = 14.dp, background = bg, border = line, spacing = 4.dp) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (handed) Icon(AppIcons.Ticket, contentDescription = null, tint = ink, modifier = Modifier.size(16.dp))
-            Text(nowTitle(a), style = AppText.SmallBold, color = ink, modifier = Modifier.weight(1f))
+            Text(nowTitle(a, owned), style = AppText.SmallBold, color = ink, modifier = Modifier.weight(1f))
             Text(
                 if (handed) a.handedOverAt?.let { formatClock(it) } ?: "" else "지금 상태",
                 style = AppText.Caption,
@@ -455,8 +458,11 @@ private fun NowStateCard(a: Applicant, messages: List<Message>) {
     }
 }
 
-/** 지금 상태 제목 (앱이 기다리는 것) */
-private fun nowTitle(a: Applicant): String = when (a.status) {
+/** 지금 상태 제목 (앱이 기다리는 것). 앱이 응대하는 상태인데 앱이 안 맡은 지원이면 그렇다고 (이유는 '다음에 앱이 할 일'에) */
+private fun nowTitle(a: Applicant, owned: Boolean): String =
+    if (a.status in MessageCare.HANDLING && !owned) NOT_OWNED_DOING else statusTitle(a)
+
+private fun statusTitle(a: Applicant): String = when (a.status) {
     ApplicantStatus.NEW -> "첫 메시지 보낼 차례"
     ApplicantStatus.FIRST_SENT -> "번호 답 기다리는 중"
     ApplicantStatus.CONTACT -> "번호 받음 · 첫 문자 보낼 차례"
@@ -501,7 +507,7 @@ private fun whenText(s: ReplyPlanner.Send): String {
     else "발송 시간(09~21시) 밖이라 ${formatClock(s.sendAt)}"
 }
 
-/** 아래 고정 칸: 직접 연락하기 ('연락 중' 표시 → 앱이 그 지원자에게 자동으로 보내지 않음). 표시가 있으면 누가·언제 */
+/** 아래 고정 칸: 직접 연락하기 ('연락 중' 표시 → 앱이 그 지원자에게 자동으로 보내지 않음 — 같은 번호 줄에 같이). 표시가 있으면 어디서·언제 */
 @Composable
 private fun ContactFooter(a: Applicant) {
     val context = LocalContext.current
@@ -522,8 +528,8 @@ private fun ContactFooter(a: Applicant) {
                     "직접 연락하기 · 자동 응답 멈춤",
                     onClick = {
                         scope.launch {
-                            db.applicantDao().setContactingMark(a.id, "직접 연락하기 · ${formatTime(System.currentTimeMillis())}")
-                            notice("${a.name}: '연락 중'으로 표시했어요 — 앱은 이 지원자에게 보내지 않아요")
+                            val n = ApplicantStore.setContacting(db, a, ApplicantStore.FROM_APP_BUTTON)
+                            notice("${a.name}: '연락 중'으로 표시했어요 — 앱은 이 지원자에게 보내지 않아요" + (if (n > 1) " (같은 번호 ${n - 1}건도 같이)" else ""))
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -554,7 +560,7 @@ private fun ContactFooter(a: Applicant) {
                 // 개발 확인용 임시 버튼 (푸는 곳은 화면 설계 '정할 것·확인할 것')
                 AppButton(
                     "연락 중 풀기 (개발용)",
-                    onClick = { scope.launch { db.applicantDao().setContactingMark(a.id, "") } },
+                    onClick = { scope.launch { ApplicantStore.setContacting(db, a, null) } },
                     modifier = Modifier.fillMaxWidth(),
                     kind = ButtonKind.DASHED,
                     textStyle = AppText.SmallStrong,

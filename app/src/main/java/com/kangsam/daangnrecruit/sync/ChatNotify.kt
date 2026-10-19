@@ -2,7 +2,11 @@ package com.kangsam.daangnrecruit.sync
 
 import com.kangsam.daangnrecruit.AppDatabase
 import com.kangsam.daangnrecruit.ApplicantStatus
+import com.kangsam.daangnrecruit.ApplicantView
 import com.kangsam.daangnrecruit.Message
+import com.kangsam.daangnrecruit.reply.MessageCare
+import com.kangsam.daangnrecruit.reply.ReplyScope
+import kotlin.math.abs
 
 /** 알림 한 건에서 꺼낸 값 (안드로이드 알림을 순수 값으로 — 폰 없이 시험할 수 있게) */
 data class Notice(
@@ -29,12 +33,14 @@ data class NoticeMessage(val sender: String, val text: String, val time: Long)
  *   당근알바·당근 공식 방, 이름 없는 메시지(우리가 알림에서 바로 답한 것)는 뺌.
  *   채팅 메시지 목록이 없는 채팅 알림이면 제목을 보낸 사람, 내용을 메시지로 봄
  * - 보낸 사람 이름이 앱에 있는 지원자 한 명과 같을 때만 그 지원자의 대화로.
- *   앱에 없는 이름 → 지원자 채팅이 아님(남기지 않음), 이름이 같은 지원자가 여럿 → 어느 방인지 몰라 남기지 않고 '못 붙임'으로 알림
- * - 지원자 메시지 · 앱 처리는 비워 둠(처리 전). 메시지 키 = noti|지원자ID|알림의 메시지 시각|길이|내용 해시
- *   → 같은 메시지가 다음 알림에 또 묶여 와도 한 번만
- * - 화면에서 가져온 같은 메시지(같은 지원자·내용, 앞뒤 12시간 안)가 이미 있으면 남기지 않음.
- *   알림은 묶여 늦게 올 수 있어(10/18 00:00에 몰려 옴) 시각이 조금 달라도 같은 메시지로 봄.
- *   반대로 나중에 화면에서 그 방을 읽으면 화면 쪽 시각·키로 고침 (ChatImport)
+ *   앱에 없는 이름 → 지원자 채팅이 아님(남기지 않음), 이름이 같은 지원자가 여럿이면 끝난 지원(종료·미응답)을 빼고 한 명일 때만.
+ *   그래도 여럿(또는 모두 끝남) → 어느 방인지 몰라 남기지 않고 '못 붙임'으로 알림
+ * - 지원자 메시지. 앱 처리는 앱 처리 기록대로 (MessageCare — 앱이 응대 중인 지원자면 처리 전, 아니면 넘김).
+ *   메시지 키 = noti|지원자ID|알림의 메시지 시각|길이|내용 해시 → 같은 메시지가 다음 알림에 또 묶여 와도 한 번만
+ * - 화면(채팅방)에서 먼저 읽은 같은 메시지(같은 지원자·내용, 앞뒤 12시간 안)가 있어도 새 줄로 넣음 — 같은 말을 두 번 보낸 것을
+ *   빠뜨리지 않으려고 (드물게 같은 메시지가 두 줄이 됨). 그 줄의 앱 처리는 시각이 가장 가까운 채팅방 줄을 따르고, 번호 받기로는 안 넘김.
+ *   알림은 묶여 늦게 올 수 있어(10/18 00:00에 몰려 옴) 시각이 조금 달라도 같은 메시지로 봄 (10/19 — 전에는 버림, 점검 P1-14).
+ *   반대로 알림이 먼저면 나중에 화면에서 그 방을 읽을 때 화면 쪽 시각·키로 고침 (ChatImport)
  * - 개발 시험: adb 테스트 알림(com.android.shell)은 예시 지원자에게만 붙이고 예시 표시 → '예시 지우기'로 지워짐
  *
  * 실제 지원자 채팅 알림은 10/18까지 아직 못 봄 → 당근알바 지원 알림과 같은 모양(채널 chat44 · 그룹 chat · 채팅 메시지 목록)으로 보고 만듦.
@@ -88,28 +94,33 @@ object ChatNotify {
         val problems = mutableListOf<String>()
         val fresh = mutableListOf<NewMessage>()
         for ((sender, msgs) in list.groupBy { it.sender.trim() }) {
-            val same = people.filter { it.name == sender }
-            if (same.isEmpty()) continue // 앱에 없는 사람 (지원자 채팅이 아님)
-            if (same.size > 1) {
-                problems += "'$sender' 메시지 ${msgs.size}개 — 이름이 같은 지원자가 ${same.size}명이라 못 붙임"
+            val named = people.filter { it.name == sender }
+            if (named.isEmpty()) continue // 앱에 없는 사람 (지원자 채팅이 아님)
+            // 이름이 같은 줄이 여럿이면 끝난 줄(종료·미응답)은 빼고 봄 — 같은 사람이 다음 회차에 다시 지원한 경우 등 [P1-2]
+            val same = if (named.size > 1) named.filter { it.status !in ApplicantView.FINISHED } else named
+            if (same.size != 1) {
+                problems += "'$sender' 메시지 ${msgs.size}개 — 이름이 같은 지원자가 ${named.size}명" +
+                    (if (same.isEmpty()) " (모두 끝난 지원)" else if (same.size < named.size) " (끝나지 않은 줄 ${same.size}개)" else "") + "이라 못 붙임"
                 continue
             }
             val a = same.single()
+            val inbound = MessageCare.inbound(a, ReplyScope.owns(a))
             var added = 0
             for (m in msgs) {
-                // 화면에서 이미 가져온 같은 메시지면 남기지 않음
+                // 화면에서 먼저 읽은 같은 메시지가 있으면: 새 줄로 넣되 앱 처리는 그 줄을 따름 (번호 받기로는 안 넘김 — 이미 본 메시지)
                 val fromScreen = dao.findSame(a.id, SENDER, m.text, m.time - TWIN_MS, m.time + TWIN_MS, ChatImport.KEY + "|")
-                if (fromScreen.isNotEmpty()) continue
+                    .minByOrNull { abs(it.time - m.time) }
                 val id = dao.insertIgnore(
                     Message(
                         time = m.time, applicantId = a.id, channel = "당근", sender = SENDER, content = m.text,
+                        appHandling = fromScreen?.appHandling ?: inbound,
                         messageKey = "$KEY|${a.id}|${m.time}|${m.text.length}|${m.text.hashCode()}",
                         isSample = test,
                     )
                 )
                 if (id > 0) {
                     added++
-                    fresh += NewMessage(a.id, m.text, m.time)
+                    if (fromScreen == null) fresh += NewMessage(a.id, m.text, m.time)
                 }
             }
             if (added > 0) {

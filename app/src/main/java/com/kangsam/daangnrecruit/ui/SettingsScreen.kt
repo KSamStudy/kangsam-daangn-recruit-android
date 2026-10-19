@@ -26,6 +26,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,16 +35,22 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kangsam.daangnrecruit.Account
 import com.kangsam.daangnrecruit.AppDatabase
+import com.kangsam.daangnrecruit.DbBackup
+import com.kangsam.daangnrecruit.DbOpen
 import com.kangsam.daangnrecruit.FeatureSettings
+import com.kangsam.daangnrecruit.sync.AccountSync
 import com.kangsam.daangnrecruit.sync.DaangnSync
 import com.kangsam.daangnrecruit.ui.theme.AppIcons
 import com.kangsam.daangnrecruit.ui.theme.AppText
 import com.kangsam.daangnrecruit.ui.theme.Palette
+import kotlinx.coroutines.launch
+import java.time.ZoneId
 
 // 7. 설정 — 처음 정하는 값과 전체 멈춤 (화면 설계 '화면별 기능').
 // 값은 '사람이 정할 항목 1차값' 초안을 보여 줌 (아직 앱에서 고치는 곳은 없음 — 정하지 않은 건 [정할 것]). 맨 아래 '알림 기록 (개발용)'
@@ -52,8 +59,13 @@ import com.kangsam.daangnrecruit.ui.theme.Palette
 fun SettingsScreen(refreshTick: Int, onOpenNotificationLog: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val notice = LocalNotice.current
-    val accounts by remember { AppDatabase.get(context).accountDao().observeAll() }.collectAsState(initial = emptyList())
+    val db = remember { AppDatabase.get(context) }
+    val scope = rememberCoroutineScope()
+    val accounts by remember { db.accountDao().observeAll() }.collectAsState(initial = emptyList())
+    val mismatch by remember { DaangnSync.mismatchFlow(context) }.collectAsState() // 닉네임이 달라 멈춘 당근 가져오기
+    var editing by remember { mutableStateOf<Account?>(null) } // 계정 고치기 창
     val notEditable = { notice("값을 고치는 곳은 아직 없어요 — 지금은 1차 값 초안을 보여 줘요") }
+    val backups = remember(refreshTick) { DbOpen.backups(context) }
 
     Column(modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState())) {
         ScreenHeader("설정", "처음 한 번 정하는 값 · 지금은 1차 값 초안")
@@ -64,10 +76,38 @@ fun SettingsScreen(refreshTick: Int, onOpenNotificationLog: () -> Unit, modifier
             AllStopCard(refreshTick)
             DaangnSyncSection(refreshTick)
 
-            val account = accounts.firstOrNull()
+            // 계정 (화면 설계 v0.8 설정 '계정·게시'): 처음 당근 가져오기 때 앱이 등록, 누르면 별칭·인증·상태·한도를 고침
+            val realAccounts = accounts.filter { !it.isSample }
+            mismatch?.let { nick ->
+                NicknameMismatchCard(
+                    nickname = nick,
+                    accounts = realAccounts,
+                    onSame = { a ->
+                        scope.launch {
+                            AccountSync.sameAccount(db, a, nick)
+                            DaangnSync.setNicknameMismatch(context, null)
+                            notice("'${a.alias}' 계정의 닉네임을 고쳤어요 ('$nick') — 당근 가져오기를 다시 할 수 있어요")
+                        }
+                    },
+                    onOther = {
+                        scope.launch {
+                            AccountSync.otherAccount(db, nick)
+                            DaangnSync.setNicknameMismatch(context, null)
+                            notice("'$nick' 계정을 새로 추가했어요 — 당근 가져오기를 다시 할 수 있어요")
+                        }
+                    },
+                )
+            }
             SettingGroup("계정·게시") {
-                SettingRow("계정", draft(account?.let(::accountLine) ?: "등록된 계정 없음"), notEditable)
-                SettingRow("계정 한도", draft(account?.let(::limitLine) ?: "게시 하루 1 · 동시 1 · 당근 30"), notEditable)
+                if (realAccounts.isEmpty()) {
+                    SettingRow("계정", draft("아직 없음 — 처음 당근 가져오기 때 앱이 등록"), {
+                        notice("계정은 처음 '당근에서 가져오기' 때 나의 당근 닉네임으로 앱이 등록해요")
+                    })
+                }
+                realAccounts.forEach { a ->
+                    SettingRow("계정", draft(accountLine(a)), { editing = a })
+                    SettingRow("계정 한도", draft(limitLine(a)), { editing = a })
+                }
                 SettingRow("성격 목록", draft("과목 수업 — 수학 · [정할 것]"), notEditable)
                 SettingRow("유료 광고", draft("안 씀 · 필수로 붙으면 안 올리고 알림"), notEditable, divider = false)
             }
@@ -92,8 +132,24 @@ fun SettingsScreen(refreshTick: Int, onOpenNotificationLog: () -> Unit, modifier
             }
             SettingGroup("연결·개인정보") {
                 SettingRow("LLM·가리기", draft("6개 가림 · 외부 LLM [정할 것]"), notEditable)
-                SettingRow("DB", draft("폰 안 · 보관 기간·사본 [정할 것]"), notEditable)
+                SettingRow("DB", draft(dbLine(backups)), {
+                    notice("폰 안 사본: 업데이트 뒤 처음 열기 전 + 하루 한 번, 최근 ${DbBackup.KEEP}개 (앱 전용 폴더). 사람이 볼 사본·폰 밖 사본·보관 기간은 담당자 결정")
+                })
                 SettingRow("리니어 구인 티켓", draft("공고별 연결 · 담당자가 옮김"), notEditable, divider = false)
+            }
+
+            editing?.let { a ->
+                AccountDialog(
+                    a = a,
+                    onDismiss = { editing = null },
+                    onSave = { u ->
+                        editing = null
+                        scope.launch {
+                            db.accountDao().update(u)
+                            notice("'${u.alias}' 계정을 고쳤어요")
+                        }
+                    },
+                )
             }
 
             // 개발 중에만: 알림 기록 (개발용)
@@ -129,8 +185,8 @@ private fun AllStopCard(refreshTick: Int) {
                 textStyle = AppText.Section.copy(fontWeight = FontWeight.Bold),
             )
             Text(
-                "앱이 하는 일(당근 가져오기·응대·공고 버튼)을 바로 멈춰요. 기능 하나만 끄려면 공고·지원자 화면의 스위치를 쓰세요. " +
-                    "개발 중: 지원 감지는 아직 '알림 기록 (개발용)'의 알림 기록 스위치로 멈춰요",
+                "앱이 하는 일(지원 감지·당근 가져오기·응대·공고 버튼)을 바로 멈춰요. 기능 하나만 끄려면 공고·지원자 화면의 스위치를 쓰세요. " +
+                    "당근에 보안 인증·이용 제한 글자가 보이거나 기록을 못 열면 앱이 스스로 켜요",
                 style = AppText.Caption.copy(lineHeight = 17.sp),
                 color = Palette.Muted,
             )
@@ -159,7 +215,7 @@ private fun AllStopCard(refreshTick: Int) {
             title = { Text("전체 멈춤할까요?", style = AppText.Section, color = Palette.Ink) },
             text = {
                 Text(
-                    "당근 가져오기·당근 응대(실제 발송 시험 포함)·공고 버튼이 바로 멈춰요. '다시 시작'을 누를 때까지 그대로예요.",
+                    "지원 감지·당근 가져오기·당근 응대(실제 발송 시험 포함)·공고 버튼이 바로 멈춰요. '다시 시작'을 누를 때까지 그대로예요.",
                     style = AppText.Body,
                     color = Palette.Ink2,
                 )
@@ -307,6 +363,82 @@ private fun draft(text: String): AnnotatedString = buildAnnotatedString {
     }
 }
 
-private fun accountLine(a: Account): String = listOf(a.alias, a.device, a.status).filter { it.isNotBlank() }.joinToString(" · ")
+/** DB 줄: 폰 안 사본 수·마지막 사본 때 (DB 설계 '폰 안 사본·표 구조가 바뀔 때') */
+private fun dbLine(backups: List<DbBackup.Copy>): String {
+    val last = backups.firstOrNull() ?: return "폰 안 · 사본 아직 없음 · 보관 기간 [정할 것]"
+    return "폰 안 · 사본 ${backups.size}개 (마지막 ${formatTime(last.time(ZoneId.systemDefault()))}) · 보관 기간 [정할 것]"
+}
+
+private fun accountLine(a: Account): String =
+    listOf(a.alias, a.nickname.takeIf { it != a.alias }.orEmpty(), a.device, a.status).filter { it.isNotBlank() }.joinToString(" · ")
+
+/** 계정 상태 · 인증 종류 고르는 값 (DB 설계 '계정') */
+private val ACCOUNT_STATUSES = listOf("사용 중", "쉬는 중", "경고", "정지")
+private val VERIFICATION_TYPES = listOf("개인", "사업자", "담당자(재직)")
+
+/** 닉네임이 달라 당근 가져오기가 멈췄을 때: 같은 계정(닉네임 고침) / 다른 계정(새로 추가) (화면 설계 v0.8 설정 '계정·게시') */
+@Composable
+private fun NicknameMismatchCard(nickname: String, accounts: List<Account>, onSame: (Account) -> Unit, onOther: () -> Unit) {
+    AppCard(radius = 14.dp, border = Palette.AmberLine, background = Palette.AmberCard) {
+        Text("나의 당근 닉네임이 달라 당근 가져오기를 멈췄어요", style = AppText.BodyStrong, color = Palette.Amber)
+        Text(
+            "이 폰 당근: '$nickname' · 앱 계정: " + accounts.joinToString(", ") { "'${it.nickname.ifBlank { it.alias }}'" } +
+                "\n같은 계정이면 닉네임만 고치고, 다른 계정이면 새로 추가해요",
+            style = AppText.Small.copy(lineHeight = 19.sp),
+            color = Palette.Ink2,
+        )
+        accounts.forEach { a ->
+            AppButton("${withWaGwa(a.alias)} 같은 계정 (닉네임 고침)", onClick = { onSame(a) }, modifier = Modifier.fillMaxWidth())
+        }
+        AppButton("다른 계정 (새로 추가)", onClick = onOther, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.DARK)
+    }
+}
+
+/** 계정 고치기 창: 별칭·인증 동네·인증 종류·상태·한도 (닉네임은 당근 가져오기가 읽은 값이라 여기서 안 고침) */
+@Composable
+private fun AccountDialog(a: Account, onDismiss: () -> Unit, onSave: (Account) -> Unit) {
+    var alias by remember(a.id) { mutableStateOf(a.alias) }
+    var area by remember(a.id) { mutableStateOf(a.verifiedArea) }
+    var kind by remember(a.id) { mutableStateOf(a.verificationType) }
+    var status by remember(a.id) { mutableStateOf(a.status) }
+    var posts by remember(a.id) { mutableStateOf(a.dailyPostLimit.toString()) }
+    var together by remember(a.id) { mutableStateOf(a.concurrentPostLimit.toString()) }
+    var messages by remember(a.id) { mutableStateOf(a.dailyMessageLimit.toString()) }
+    fun digits(v: String) = v.filter(Char::isDigit).take(3)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("계정 '${a.nickname.ifBlank { a.alias }}'", style = AppText.Section, color = Palette.Ink) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                LabeledField("별칭", alias, { alias = it.take(20) }, placeholder = "예: 구인1")
+                LabeledField("인증 동네", area, { area = it.take(20) }, placeholder = "예: 송도동")
+                Text("인증 종류", style = AppText.Caption, color = Palette.Muted)
+                Segmented(VERIFICATION_TYPES, kind, onSelect = { kind = it }, height = 40.dp)
+                Text("상태", style = AppText.Caption, color = Palette.Muted)
+                Segmented(ACCOUNT_STATUSES, status, onSelect = { status = it }, height = 40.dp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LabeledField("하루 게시", posts, { posts = digits(it) }, Modifier.weight(1f), keyboardType = KeyboardType.Number)
+                    LabeledField("동시 게시", together, { together = digits(it) }, Modifier.weight(1f), keyboardType = KeyboardType.Number)
+                    LabeledField("하루 당근", messages, { messages = digits(it) }, Modifier.weight(1f), keyboardType = KeyboardType.Number)
+                }
+                Text("닉네임은 당근 가져오기가 나의 당근에서 읽은 값이라 여기서 안 고쳐요 ('${a.nickname}')", style = AppText.Caption, color = Palette.Muted)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onSave(
+                    a.copy(
+                        alias = alias.trim().ifBlank { a.alias }, verifiedArea = area.trim(), verificationType = kind, status = status,
+                        dailyPostLimit = posts.toIntOrNull() ?: a.dailyPostLimit,
+                        concurrentPostLimit = together.toIntOrNull() ?: a.concurrentPostLimit,
+                        dailyMessageLimit = messages.toIntOrNull() ?: a.dailyMessageLimit,
+                    )
+                )
+            }) { Text("저장", style = AppText.BodyStrong, color = Palette.Green) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소", style = AppText.BodyStrong, color = Palette.Ink2) } },
+        containerColor = Palette.Surface,
+    )
+}
 
 private fun limitLine(a: Account): String = "게시 하루 ${a.dailyPostLimit} · 동시 ${a.concurrentPostLimit} · 당근 ${a.dailyMessageLimit}"

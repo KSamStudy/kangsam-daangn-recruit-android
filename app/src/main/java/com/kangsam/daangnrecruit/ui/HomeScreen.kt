@@ -68,7 +68,7 @@ fun HomeScreen(
     val posts by remember { db.postDao().observeStandingPosts() }.collectAsState(initial = emptyList())
     val postings by remember { db.postDao().observePostings() }.collectAsState(initial = emptyList())
     val messages by remember(since) { db.messageDao().observeSince(since) }.collectAsState(initial = emptyList())
-    val checkCount by remember { db.checkDao().observeCount() }.collectAsState(initial = 0)
+    val checkCount = rememberCheckCount()
     // 기능 스위치는 앱 설정 값이라 화면에 들어올 때·앱으로 돌아올 때 다시 읽음
     val switches = remember(refreshTick) {
         HomeSummary.Switches(
@@ -418,7 +418,8 @@ internal object HomeSummary {
             }
             p.closedAt?.let { at ->
                 if (at in since..now) {
-                    out.add(Activity(at, "$label 마감" + (if (p.closedBy.isNotBlank()) " (${p.closedBy})" else ""), target = Target.Tab(AppTab.POSTS)))
+                    val who = listOf(p.closedBy, p.closeReason).filter { it.isNotBlank() }.joinToString(" · ")
+                    out.add(Activity(at, "$label 마감" + (if (who.isNotBlank()) " ($who)" else ""), target = Target.Tab(AppTab.POSTS)))
                 }
             }
             if (p.status == "검사 걸림" || p.status == "결과 불명") {

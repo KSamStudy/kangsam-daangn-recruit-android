@@ -3,6 +3,7 @@ package com.kangsam.daangnrecruit.reply
 import com.kangsam.daangnrecruit.AppDatabase
 import com.kangsam.daangnrecruit.Applicant
 import com.kangsam.daangnrecruit.ApplicantStatus
+import com.kangsam.daangnrecruit.ApplicantStore
 import com.kangsam.daangnrecruit.HoldReason
 
 /**
@@ -40,7 +41,7 @@ object ContactFlow {
         val a = db.applicantDao().get(applicantId) ?: return null
         val staff = ReplyRules.staffMessages(db.messageDao().listFor(a.id))
         val change = decide(a, found, others(db, a, found), appInCharge, fromHistory = false, staffMessages = staff) ?: return null
-        change.updated?.let { db.applicantDao().update(it) }
+        change.updated?.let { ApplicantStore.update(db, it) }
         return "${a.name}: ${change.note}"
     }
 
@@ -54,7 +55,7 @@ object ContactFlow {
             if (found.isEmpty()) continue
             val change = decide(a, found, others(db, a, found), appInCharge = false, fromHistory = true) ?: continue
             val updated = change.updated ?: continue // 번호가 애매하면 지난 대화로는 채우지 않음
-            db.applicantDao().update(updated)
+            ApplicantStore.update(db, updated)
             out += "${a.name}: ${change.note}"
         }
         return out
@@ -107,8 +108,10 @@ object ContactFlow {
         if (a.phoneKey == f.key) return null // 이미 받은 번호
         val withPhone = a.copy(phone = f.raw, phoneKey = f.key)
         if (!byApp) {
-            val same = if (others.isEmpty()) "" else " · 같은 번호의 다른 지원 건: ${others.joinToString(", ") { it.name }}"
-            return Change(withPhone, "연락처 저장 (상태 그대로 '${a.status}')$same")
+            if (others.isEmpty()) return Change(withPhone, "연락처 저장 (상태 그대로 '${a.status}')")
+            // 같은 번호의 다른 지원 건은 같은 사람 후보 칸에 (표시만 — 상태·합치기는 그대로, DB 설계 '같은 사람 후보')
+            val names = others.joinToString(", ") { it.name }
+            return Change(withPhone.copy(sameCandidate = names), "연락처 저장 (상태 그대로 '${a.status}') · 같은 번호의 다른 지원 건: $names")
         }
         return gotNumber(a, f, others)
     }

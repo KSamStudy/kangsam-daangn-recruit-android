@@ -19,6 +19,21 @@ interface AccountDao {
 
     @Query("SELECT * FROM accounts WHERE id = :id")
     suspend fun get(id: Long): Account?
+
+    /** 계정 모두 (한 번 읽음 — 계정 맞추기·계정 상태 기록) */
+    @Query("SELECT * FROM accounts ORDER BY id")
+    suspend fun all(): List<Account>
+
+    @Update
+    suspend fun update(account: Account)
+
+    /** 계정 상태 기록 한 줄 (경고·정지 — Safety) */
+    @Insert
+    suspend fun insertEvent(event: AccountEvent): Long
+
+    /** 한 계정의 상태 기록 (최근 것부터) */
+    @Query("SELECT * FROM account_events WHERE accountId = :accountId ORDER BY time DESC")
+    suspend fun eventsOf(accountId: Long): List<AccountEvent>
 }
 
 @Dao
@@ -69,6 +84,18 @@ interface PostDao {
     /** 사유가 이 글자로 시작하는 게시물 (개발용: '내 공고' 화면에서 가져온 것 찾기) */
     @Query("SELECT * FROM postings WHERE reason LIKE :prefix || '%'")
     suspend fun postingsWithReasonPrefix(prefix: String): List<Posting>
+
+    /** 계정 칸이 빈 상시 공고에 이 계정 (예시는 빼고 — 계정 맞추기). 바꾼 수 */
+    @Query("UPDATE standing_posts SET accountId = :accountId WHERE accountId IS NULL AND isSample = 0")
+    suspend fun fillStandingAccount(accountId: Long): Int
+
+    /** 계정 칸이 빈 게시물에 이 계정 (예시는 빼고 — 계정 맞추기). 바꾼 수 */
+    @Query("UPDATE postings SET accountId = :accountId WHERE accountId IS NULL AND isSample = 0")
+    suspend fun fillPostingAccount(accountId: Long): Int
+
+    /** 이 때 사이에 앱이 올린 게시물 수 (계정 상태 기록의 '직전 앱 동작') */
+    @Query("SELECT COUNT(*) FROM postings WHERE postedAt BETWEEN :since AND :until AND postedBy IN ('앱 자동', '지금 올리기')")
+    suspend fun appPostedBetween(since: Long, until: Long): Int
 
     @Query("UPDATE standing_posts SET currentPostingId = NULL WHERE currentPostingId IN (:postingIds)")
     suspend fun clearCurrentPosting(postingIds: List<Long>)
@@ -125,6 +152,14 @@ interface ApplicantDao {
     /** 공고명·이름이 같은 지원 건 (화면에서 가져올 때 이미 있는 사람인지 봄) */
     @Query("SELECT * FROM applicants WHERE postTitle = :title AND name = :name")
     suspend fun findByTitleAndName(title: String, name: String): List<Applicant>
+
+    /** 아직 공고(게시물)를 못 붙인 지원 건 중 공고명이 같은 것 — '공고 못 찾음'으로 기다리는 줄 (같은 지원인지 볼 때) */
+    @Query("SELECT * FROM applicants WHERE postingId IS NULL AND postTitle = :title")
+    suspend fun unlinked(title: String): List<Applicant>
+
+    /** 지원 키로 한 줄 (같은 알림이 두 번 왔는지) */
+    @Query("SELECT * FROM applicants WHERE sourceKey = :key")
+    suspend fun bySourceKey(key: String): Applicant?
 
     /** 한 게시물(회차)에 붙은 지원 건 (당근 지원자 목록과 맞출 때 — 목록에서 빠진 사람·수 비교) */
     @Query("SELECT * FROM applicants WHERE postingId = :postingId")
@@ -200,6 +235,18 @@ interface MessageDao {
     /** 한 지원자의 대화를 한 번 읽음 (오래된 것부터 — 첫 메시지 드라이런) */
     @Query("SELECT * FROM messages WHERE applicantId = :applicantId ORDER BY time")
     suspend fun listFor(applicantId: Long): List<Message>
+
+    /** 이 지원자의 처리 전(앱 처리 빈 칸) 지원자 메시지를 모두 '넘김'으로 — 앱이 응대하지 않게 됐을 때 (ApplicantStore.settle). 바꾼 수 */
+    @Query("UPDATE messages SET appHandling = '넘김' WHERE applicantId = :applicantId AND sender = '지원자' AND appHandling = ''")
+    suspend fun handOverPending(applicantId: Long): Int
+
+    /** 처리 전 지원자 메시지가 있는 지원자 (실제 발송 시험을 끌 때 한 번에 맞춤) */
+    @Query("SELECT DISTINCT applicantId FROM messages WHERE sender = '지원자' AND appHandling = ''")
+    suspend fun pendingApplicantIds(): List<Long>
+
+    /** 이 때 사이에 앱이 이 채널로 보낸 메시지 수 (결과 불명 포함 — 계정 상태 기록의 '직전 앱 동작') */
+    @Query("SELECT COUNT(*) FROM messages WHERE sender = '우리' AND sendMethod IN ('앱 자동', '결과 불명') AND channel = :channel AND time BETWEEN :since AND :until")
+    suspend fun appSentBetween(channel: String, since: Long, until: Long): Int
 
     /** 이 방법으로 보낸 최근 메시지 (최근 것부터 — 앱이 보낸 문구와 같은 문구를 피할 때) */
     @Query("SELECT * FROM messages WHERE sendMethod = :method ORDER BY time DESC LIMIT :limit")

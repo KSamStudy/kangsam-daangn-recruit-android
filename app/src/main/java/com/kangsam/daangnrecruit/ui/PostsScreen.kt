@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -59,6 +61,7 @@ fun PostsScreen(onEditPost: (Long) -> Unit, modifier: Modifier = Modifier) {
     val allStop = remember { FeatureSettings.isOn(context, FeatureSettings.ALL_STOP) }
     var showManual by rememberSaveable { mutableStateOf(false) }
     var manualTitle by rememberSaveable { mutableStateOf("") }
+    var closing by remember { mutableStateOf<StandingPost?>(null) } // '마감했어요' → 마감 이유 고르는 창
 
     // 버튼을 누르면 앱 안 기록을 고치고, 결과 한 줄을 화면 아래 띠로
     fun act(block: suspend () -> String) {
@@ -119,7 +122,7 @@ fun PostsScreen(onEditPost: (Long) -> Unit, modifier: Modifier = Modifier) {
                     }
                 },
                 onPostNow = { act { PostActions.tryPostNow(db, post, FeatureSettings.isOn(context, FeatureSettings.ALL_STOP)) } },
-                onClosed = { act { PostActions.markClosed(db, post) } },
+                onClosed = { closing = post },
                 onEdit = { onEditPost(post.id) },
             )
         }
@@ -173,6 +176,45 @@ fun PostsScreen(onEditPost: (Long) -> Unit, modifier: Modifier = Modifier) {
             }
         }
     }
+
+    closing?.let { post ->
+        CloseReasonDialog(
+            post = post,
+            onDismiss = { closing = null },
+            onConfirm = { why ->
+                closing = null
+                act { PostActions.markClosed(db, post, why) }
+            },
+        )
+    }
+}
+
+/** '마감했어요' → 마감 이유 고르기 (화면 설계 '마감했어요': 채용 끝남이 기본 / 그 밖 — 한 줄 적기). 고르면 그 회차가 바로 마감('내 공고' 확인 전) */
+@Composable
+private fun CloseReasonDialog(post: StandingPost, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var other by remember { mutableStateOf(false) }
+    var memo by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("마감 이유", style = AppText.Section, color = Palette.Ink) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("${post.name} — 당근에서 마감했으면 이유를 골라 주세요", style = AppText.Small, color = Palette.Ink2)
+                Segmented(listOf(PostActions.CLOSE_HIRED, "그 밖"), if (other) "그 밖" else PostActions.CLOSE_HIRED, onSelect = { other = it == "그 밖" })
+                if (other) AppTextField(memo, { memo = it.take(60) }, placeholder = "한 줄로 (예: 수업 취소)")
+                Text("앱이 '내 공고'에서 마감을 보면 '마감 확인'이 되고, 그때 다음 게시 시각을 정해요", style = AppText.Caption, color = Palette.Muted)
+            }
+        },
+        confirmButton = {
+            val ready = !other || memo.isNotBlank() // '그 밖'이면 한 줄을 적어야 남김
+            TextButton(
+                onClick = { onConfirm(if (other) memo.trim() else PostActions.CLOSE_HIRED) },
+                enabled = ready,
+            ) { Text("마감으로 남기기", style = AppText.BodyStrong, color = if (ready) Palette.Green else Palette.Placeholder) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소", style = AppText.BodyStrong, color = Palette.Ink2) } },
+        containerColor = Palette.Surface,
+    )
 }
 
 /**
@@ -302,10 +344,11 @@ private fun nowStatus(p: StandingPost, postings: List<Posting>, inProgress: Int)
     else "올라간 글 없음 · 올릴 차례" to Tone.GRAY
 }
 
-/** 지난 회차 한 줄: 마감 · 10/10 담당자 · 채용 끝남 */
+/** 지난 회차 한 줄: 마감 · 10/10 담당자 · 채용 끝남 (마감 이유, 그다음 사유) */
 private fun roundLine(p: Posting): String = buildString {
     append(p.status)
     p.closedAt?.let { append(" · ${formatDate(it)}") }
     if (p.closedBy.isNotBlank()) append(" ${p.closedBy}")
+    if (p.closeReason.isNotBlank()) append(" · ${p.closeReason}")
     if (p.reason.isNotBlank()) append(" · ${p.reason}")
 }

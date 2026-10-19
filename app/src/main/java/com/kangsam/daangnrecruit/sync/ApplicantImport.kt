@@ -3,6 +3,7 @@ package com.kangsam.daangnrecruit.sync
 import com.kangsam.daangnrecruit.AppDatabase
 import com.kangsam.daangnrecruit.Applicant
 import com.kangsam.daangnrecruit.ApplicantStatus
+import com.kangsam.daangnrecruit.ApplicantStore
 import com.kangsam.daangnrecruit.HoldReason
 
 /**
@@ -11,8 +12,11 @@ import com.kangsam.daangnrecruit.HoldReason
  * 그 밖(연락중·연락 대기중 — 담당자가 이미 지원서를 본 사람) → 담당자 응대 중 (앱이 먼저 연락하지 않게)
  *
  * 공고별로 맞춤: 지원자 목록 화면 하나 = 공고 하나(지금 올라가 있는 글)의 지원자 → 그 글(게시물·회차)에 붙임.
- * 이미 있는 사람은 이 글에 붙은 줄이나 아직 글을 못 찾은 줄('공고 못 찾음')만 같은 사람으로 봄
- * (같은 공고명이라도 지난 회차의 지원은 다른 지원 건). 글을 못 찾은 줄은 이 글에 붙이고 '공고 못 찾음' 보류를 풂.
+ * 이미 있는 사람은 이 글에 붙은 줄('공고 고르기'로 붙인 줄 포함 — 게시물ID로 찾음)이나 아직 글을 못 찾은 줄('공고 못 찾음')만
+ * 같은 사람으로 봄 (같은 공고명이라도 지난 회차의 지원은 다른 지원 건). 글을 못 찾은 줄은 이 글에 붙이고 '공고 못 찾음' 보류를 풂.
+ * 앱에 이 글이 없으면 못 찾은 줄만 봄 — 지난 회차 줄을 이번 지원으로 보지 않음.
+ * 지원 키 = screen|p<게시물ID>|이름|나이대·성별|동네 (글을 못 찾았으면 screen|t:<공고명>|…) — 회차마다 달라서
+ * 다음 회차에 다시 지원한 사람도 새 줄이 됨 (10/19 — 전에는 공고명이라 조용히 안 들어감, 점검 P1-10)
  *
  * 10/18 더함 (폰 DB와 당근 목록을 비교해 찾은 빈 곳):
  * - 목록을 다 읽었을 때(탭의 수 = 카드 수) 이 글에 붙은 줄인데 목록에 없는 사람 → '종료' (사유가 GONE으로 시작). 다시 보이면 되돌림
@@ -63,8 +67,7 @@ object ApplicantImport {
             val reason = if (s.unread) "" else "당근 상태: ${s.daangnStatus.ifBlank { "읽음" }}"
 
             // 이미 있는 사람 (알림으로 들어왔거나 전에 화면에서 가져옴) — 이 글에 붙은 줄이나 아직 글을 못 찾은 줄만
-            val existing = dao.findByTitleAndName(list.postTitle, s.name)
-                .filter { posting == null || it.postingId == null || it.postingId == posting.id }
+            val existing = known(db, posting?.id, list.postTitle, s.name)
             if (existing.isNotEmpty()) {
                 for (e in existing) {
                     var u = e.copy(area = e.area.ifBlank { s.area })
@@ -90,7 +93,7 @@ object ApplicantImport {
                         u = u.copy(appliedAt = estimate)
                     }
                     if (u != e) {
-                        dao.update(u)
+                        ApplicantStore.update(db, u)
                         changed++
                     }
                 }
@@ -100,7 +103,7 @@ object ApplicantImport {
             val base = Applicant(
                 name = s.name, area = s.area, postTitle = list.postTitle, status = status, reason = reason,
                 appliedAt = MyPostParser.estimatePostedAt(s.appliedAgo, now) ?: now,
-                sourceKey = "$SOURCE|${list.postTitle}|${s.name}|${s.ageGender}|${s.area}",
+                sourceKey = sourceKey(posting?.id, list.postTitle, s),
                 rawText = "[지원자 목록] " + listOf(
                     if (s.unread) "N" else s.daangnStatus, s.ageGender, s.area, "${s.appliedAgo} 지원",
                 ).filter { it.isNotBlank() }.joinToString(" · "),
@@ -108,7 +111,8 @@ object ApplicantImport {
             val row = if (posting != null) {
                 base.copy(standingPostId = posting.standingPostId, postingId = posting.id)
             } else {
-                base.copy(status = ApplicantStatus.HOLD, statusBeforeHold = status, reason = HoldReason.POST_NOT_FOUND)
+                // 당근 상태(연락중 등)는 사유 뒤에 남겨 두고, 공고가 붙어 보류가 풀릴 때 되살림 (HoldReason.restore)
+                base.copy(status = ApplicantStatus.HOLD, statusBeforeHold = status, reason = HoldReason.postNotFound(reason))
             }
             if (dao.insert(row) > 0) added++
         }
@@ -121,7 +125,7 @@ object ApplicantImport {
             val names = list.applicants.map { it.name }.toSet()
             for (e in dao.byPosting(posting.id)) {
                 if (e.isSample || e.name in names || e.status !in ENDS_WHEN_GONE || now - e.appliedAt < JUST_APPLIED_MS) continue
-                dao.update(e.copy(status = ApplicantStatus.ENDED, reason = if (e.status == ApplicantStatus.NEW) EXPIRED else GONE_READ))
+                ApplicantStore.update(db, e.copy(status = ApplicantStatus.ENDED, reason = if (e.status == ApplicantStatus.NEW) EXPIRED else GONE_READ))
                 gone++
             }
             val rows = dao.byPosting(posting.id).filter { !it.isSample && !isGone(it) }
@@ -136,6 +140,20 @@ object ApplicantImport {
             (if (gone > 0) " · 당근 목록에 없어 종료 ${gone}명" else "") +
             compared +
             (if (posting == null) " · 앱에 이 공고가 없어 '공고 못 찾음'으로 둠" else "")
+    }
+
+    /** 지원 키: 글(회차)마다 다르게 — 글을 못 찾았으면 공고명으로 */
+    fun sourceKey(postingId: Long?, title: String, s: ScreenApplicant): String =
+        "$SOURCE|${postingId?.let { "p$it" } ?: "t:$title"}|${s.name}|${s.ageGender}|${s.area}"
+
+    /**
+     * 이 카드와 같은 사람으로 볼 줄: 이 글에 붙은 줄 중 이름이 같은 줄 + 같은 공고명으로 못 찾은 줄 중 이름이 같은 줄.
+     * 글이 앱에 없으면(postingId null) 못 찾은 줄만
+     */
+    private suspend fun known(db: AppDatabase, postingId: Long?, title: String, name: String): List<Applicant> {
+        val dao = db.applicantDao()
+        val attached = postingId?.let { dao.byPosting(it) }.orEmpty()
+        return (attached + dao.unlinked(title)).filter { it.name == name }.distinctBy { it.id }
     }
 
     /** 이 글의 앱 기록(목록에서 빠진 사람 빼고)과 당근 탭의 수를 견준 한 줄. 다르면 당근 목록에 없는 사람을 적음 */

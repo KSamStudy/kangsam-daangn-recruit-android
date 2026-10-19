@@ -19,7 +19,17 @@ class DaangnWalker(
      * 바로 멈춤 (이유는 메시지). left = 당근을 벗어남 (사람이 홈을 눌렀거나 다른 앱이 뜸 — 멈추는 방법이라 다시 하지 않음),
      * alarm = 멈춤 글자(보안 인증·이용 제한 등)가 보임 (즉시 중단 — 실제 발송 시험은 시험을 끔)
      */
-    class Stop(message: String, val left: Boolean = false, val alarm: Boolean = false) : Exception(message)
+    /**
+     * 멈춤. left = 사람이 당근을 벗어남, alarm = 멈춤 글자(보안 인증·이용 제한 등)가 보임 —
+     * 그때 word = 그 글자, notice = 그 글자가 든 당근 안내 문구 (전체 멈춤 + 계정 상태 기록 — Safety)
+     */
+    class Stop(
+        message: String,
+        val left: Boolean = false,
+        val alarm: Boolean = false,
+        val word: String = "",
+        val notice: String = "",
+    ) : Exception(message)
 
     private var clicks = 0
 
@@ -51,7 +61,7 @@ class DaangnWalker(
         if (++clicks > MAX_CLICKS) throw Stop("한 번에 누르는 횟수(${MAX_CLICKS}번)를 넘어서 멈췄어요")
         driver.pause(random.nextLong(1_200, 2_800))
         val s = driver.current() ?: throw Stop("당근 화면을 벗어나서 멈췄어요", left = true)
-        DaangnNav.stopWord(s.nodes)?.let { throw Stop("'$it' 글자가 보여서 멈췄어요", alarm = true) }
+        DaangnNav.stopWord(s.nodes)?.let { throw alarmStop(it, s) }
         val i = find(s.nodes) ?: throw Stop("누를 칸을 못 찾아서 멈췄어요: $what")
         if (!safe(s.nodes, i)) throw Stop("누르면 안 되는 칸이라 멈췄어요: $what")
         if (!driver.click(s, i)) throw Stop("누르기가 안 돼서 멈췄어요: $what")
@@ -90,7 +100,7 @@ class DaangnWalker(
         while (driver.clock() - start < SETTLE_MS) {
             driver.pause(SETTLE_POLL_MS)
             val s = driver.current() ?: return last
-            DaangnNav.stopWord(s.nodes)?.let { throw Stop("'$it' 글자가 보여서 멈췄어요", alarm = true) }
+            DaangnNav.stopWord(s.nodes)?.let { throw alarmStop(it, s) }
             if (s.page != page) return last
             val g = still(s)
             if (g == sig) return s
@@ -183,13 +193,17 @@ class DaangnWalker(
                 if (driver.clock() - awaySince > awayMs) throw Stop("당근 화면을 벗어나서 멈췄어요", left = true)
             } else {
                 awaySince = -1L
-                DaangnNav.stopWord(s.nodes)?.let { throw Stop("'$it' 글자가 보여서 멈췄어요", alarm = true) }
+                DaangnNav.stopWord(s.nodes)?.let { throw alarmStop(it, s) }
                 if (ok(s)) return s
             }
             driver.pause(POLL_MS)
         }
         return null
     }
+
+    /** 멈춤 글자가 보여 멈춤 (전체 멈춤 + 계정 상태 기록은 부른 쪽이 — Safety) */
+    private fun alarmStop(word: String, s: Snapshot) =
+        Stop("'$word' 글자가 보여서 멈췄어요", alarm = true, word = word, notice = DaangnNav.stopNotice(s.nodes))
 
     /** 지금 화면 한 줄 (멈춘 이유에 붙임) */
     fun describe(): String {

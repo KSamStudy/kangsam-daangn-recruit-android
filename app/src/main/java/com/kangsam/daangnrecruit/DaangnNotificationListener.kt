@@ -22,7 +22,8 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * 당근 알림을 읽어서 (1) 알림 원문을 기록 파일에 남기고, (2) 지원 알림이면 폰 안 DB에 지원자 한 줄을 남기는 서비스 (사용자 프로세스 B1).
+ * 당근 알림을 읽어서 (1) 알림 원문을 기록 파일에 남기고(개발용 스위치를 켰을 때만), (2) 지원 알림이면 폰 안 DB에 지원자 한 줄을 남기는 서비스 (사용자 프로세스 B1).
+ * '전체 멈춤'이면 아무것도 안 함 (10/19 — 전에는 개발용 '알림 기록' 스위치로 지원 감지까지 같이 멈춤, 점검 P0-1).
  * (3) 지원자가 보낸 채팅 메시지 알림이면 그 지원자의 대화에 남김 (당근 가져오기 C3 — 그 기능이 켜져 있을 때만, 10/18).
  * (4) 새로 남긴 메시지에 휴대폰 번호가 있으면 연락처를 저장 (지원자 응대 B3 — reply/ContactFlow, 10/18).
  * (5) 실제 발송 시험: 시험 대상 지원이면 첫 메시지 차례를 잡고, 당근 알림이 오면 답을 기다리는 시험 대상을 다시 보게 함 (reply/LiveReply, 10/18).
@@ -44,16 +45,17 @@ class DaangnNotificationListener : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        // 앱 화면에서 기록을 켜둔 경우에만 동작 (기본 OFF). 끄면 기록·지원 감지 모두 멈춤 (수동 중지)
-        if (!NotificationLog.isEnabled(this)) return
-
         // 정해둔 앱에서 온 알림만
         if (sbn.packageName !in WATCHED_PACKAGES) return
+        // '전체 멈춤'이면 아무것도 안 함 — 지원 감지까지 (사용자 프로세스 '기능 켜기·끄기': 지원 감지는 따로 끄지 않고 전체 멈춤으로만, 10/19 6단계)
+        if (FeatureSettings.isOn(this, FeatureSettings.ALL_STOP)) return
 
-        // (1) 알림 원문 기록
-        runCatching { NotificationLog.append(this, toJson(sbn)) }
-            .onSuccess { Log.i(TAG, "기록함: ${sbn.packageName}") }
-            .onFailure { saveError("알림 기록", it) }
+        // (1) 알림 원문 기록 — 개발용 '알림 기록' 스위치를 켰을 때만 (이 스위치는 원문 기록 파일만 켜고 끔)
+        if (NotificationLog.isEnabled(this)) {
+            runCatching { NotificationLog.append(this, toJson(sbn)) }
+                .onSuccess { Log.i(TAG, "기록함: ${sbn.packageName}") }
+                .onFailure { saveError("알림 기록", it) }
+        }
 
         // (2) 지원 알림이면 지원자 한 줄 저장 (같은 알림은 두 번 저장하지 않음)
         detectApply(sbn)
@@ -73,16 +75,18 @@ class DaangnNotificationListener : NotificationListenerService() {
             .getOrDefault(emptyList())
         if (found.isEmpty()) return
         scope.launch {
-            val db = AppDatabase.get(applicationContext)
-            val dao = db.applicantDao()
+            val db = DbOpen.db(applicationContext) ?: return@launch // DB를 못 열었으면 안 씀 (기록을 지키려고 — DbOpen)
             for (a in found) {
-                // 공고명으로 게시물을 찾아 붙이고, 못 찾으면 보류 '공고 못 찾음' (B1)
-                runCatching { dao.insert(ApplyLinker.link(db, a)) }
-                    .onSuccess { id ->
-                        if (id > 0) {
-                            Log.i(TAG, "새 지원 저장: ${a.name}")
-                            LiveReply.onApplied(applicationContext, id) // 실제 발송 시험 대상이면 첫 메시지 차례를 잡음
+                // 공고명으로 게시물을 붙이고(못 찾으면 보류 '공고 못 찾음'), 같은 지원 건이 이미 있으면 새 줄을 안 만듦 (B1 — ApplyLinker)
+                runCatching { ApplyLinker.save(db, a) }
+                    .onSuccess { saved ->
+                        when (saved.kind) {
+                            ApplyLinker.Kind.NEW -> Log.i(TAG, "새 지원 저장: ${a.name}")
+                            ApplyLinker.Kind.SAME_PERSON -> Log.i(TAG, "이미 있는 지원 (같은 글·이름): ${a.name}")
+                            ApplyLinker.Kind.SAME_NOTICE -> {}
                         }
+                        // 실제 발송 시험 대상이면 첫 메시지 차례를 잡음 (같은 알림이 또 온 것은 빼고)
+                        if (saved.kind != ApplyLinker.Kind.SAME_NOTICE) LiveReply.onApplied(applicationContext, saved.id)
                     }
                     .onFailure { saveError("지원 저장", it) }
             }
@@ -96,7 +100,7 @@ class DaangnNotificationListener : NotificationListenerService() {
             .getOrNull() ?: return
         if (ChatNotify.messages(notice).isEmpty()) return
         scope.launch {
-            val db = AppDatabase.get(applicationContext)
+            val db = DbOpen.db(applicationContext) ?: return@launch
             runCatching { ChatNotify.save(db, notice) }
                 .onSuccess { r ->
                     r.saved.forEach { Log.i(TAG, "대화 알림: $it") }
@@ -189,7 +193,7 @@ class DaangnNotificationListener : NotificationListenerService() {
         Log.e(TAG, "$place 오류", e)
         scope.launch {
             runCatching {
-                AppDatabase.get(applicationContext).errorLogDao().insert(
+                DbOpen.db(applicationContext)?.errorLogDao()?.insert(
                     ErrorLog(time = System.currentTimeMillis(), place = place, message = e.toString())
                 )
             }

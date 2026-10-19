@@ -1,5 +1,6 @@
 package com.kangsam.daangnrecruit.reply
 
+import com.kangsam.daangnrecruit.Account
 import com.kangsam.daangnrecruit.Applicant
 import com.kangsam.daangnrecruit.ApplicantStatus
 
@@ -23,7 +24,10 @@ object LiveGate {
 
     const val ARM_MARGIN_MS = 30 * 60_000L // 켜기 전 이만큼 안에 들어온 지원도 대상 (지원하고 나서 켰을 때)
     const val MAX_PER_APPLICANT = 4        // 한 사람에게 보내는 당근 메시지 (첫 메시지 + 다시 요청 2번 + 마무리)
-    const val MAX_PER_DAY = 10             // 하루에 앱이 보내는 당근 메시지
+    const val MAX_PER_DAY = 10             // 하루에 앱이 보내는 당근 메시지 (시험 한도 — 계정 한도가 더 작으면 그것)
+
+    /** 하루 당근 메시지 한도: 그 계정의 한도와 시험 한도 중 작은 것 (점검 P1-12 — 계정을 모르면 시험 한도) */
+    fun dailyLimit(account: Account?): Int = minOf(account?.dailyMessageLimit ?: MAX_PER_DAY, MAX_PER_DAY)
 
     /** 앱이 실제 발송 시험에서 다루는 상태 (그 밖은 보낼 단계가 아님) */
     val HANDLED = setOf(ApplicantStatus.NEW, ApplicantStatus.FIRST_SENT, ApplicantStatus.CONTACT)
@@ -46,7 +50,7 @@ object LiveGate {
      * 지금 이 지원자에게 보내면 안 되는 이유 (없으면 null). sentToApplicant·sentToday = 앱이 보낸 당근 메시지 수,
      * unknownSends = 결과 불명으로 남은 메시지 수 (보냈는지 모르는 게 있으면 사람이 방을 볼 때까지 안 보냄)
      */
-    fun block(c: Config, a: Applicant, sentToApplicant: Int, sentToday: Int, unknownSends: Int = 0): String? {
+    fun block(c: Config, a: Applicant, sentToApplicant: Int, sentToday: Int, unknownSends: Int = 0, dailyLimit: Int = MAX_PER_DAY): String? {
         configProblem(c)?.let { return it }
         val people = ReplyRules.peopleReason(a)
         return when {
@@ -58,7 +62,7 @@ object LiveGate {
             a.status !in HANDLED -> "상태가 '${a.status}' — 앱이 당근으로 보낼 단계가 아님"
             unknownSends > 0 -> "결과 불명인 메시지 ${unknownSends}개 — 사람이 채팅방을 확인할 때까지 안 보냄"
             sentToApplicant >= MAX_PER_APPLICANT -> "이 지원자에게 보낸 당근 메시지가 한도 (${MAX_PER_APPLICANT}개)"
-            sentToday >= MAX_PER_DAY -> "오늘 앱이 보낸 당근 메시지가 한도 (${MAX_PER_DAY}개)"
+            sentToday >= dailyLimit -> "오늘 앱이 보낸 당근 메시지가 한도 (${dailyLimit}개)"
             else -> null
         }
     }

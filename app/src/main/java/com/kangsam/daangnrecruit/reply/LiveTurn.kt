@@ -3,8 +3,11 @@ package com.kangsam.daangnrecruit.reply
 import com.kangsam.daangnrecruit.AppDatabase
 import com.kangsam.daangnrecruit.Applicant
 import com.kangsam.daangnrecruit.ApplicantStatus
+import com.kangsam.daangnrecruit.ApplicantStore
 import com.kangsam.daangnrecruit.Message
+import com.kangsam.daangnrecruit.sync.AccountSync
 import com.kangsam.daangnrecruit.sync.ApplicantImport
+import com.kangsam.daangnrecruit.sync.ChatImport
 import com.kangsam.daangnrecruit.sync.ChatRoomParser
 import com.kangsam.daangnrecruit.sync.DaangnNav
 import com.kangsam.daangnrecruit.sync.DaangnPage
@@ -23,6 +26,8 @@ import kotlin.random.Random
  *   → ④ 다음에 할 일 (Conversation) → ⑤ 문구 (ReplyPlanner·Templates — 무작위) · 발송 전 검사 (ReplyRules)
  *   → ⑥ 입력창에 쓰고 쓰인 글자 대조 → (연습이면 전송 칸만 찾고 지우고 끝) 전송 → 방에 우리 말풍선으로 보여야 보낸 것
  *   → ⑦ 기록 (대화 표 · 지원자 상태 — 번호는 ContactFlow와 같은 규칙) → 방에서 나와 우리 앱으로
+ * ③에서 방에 보이는 메시지를 대화 표에 먼저 남김 (ChatImport — 판단에 쓴 지원자 말·번호도 기록에 남게, 앱 처리 기록대로 처리 전).
+ * 보내면 그 전 처리 전 메시지는 '답함', 사람에게 넘기면 ApplicantStore가 '넘김'으로 (DB 설계 '앱 처리 기록')
  *
  * 부품마다 따로: 판단은 LiveGate·Conversation, 칸 찾기는 LiveNav (모두 순수 코드), 화면 옮기기는 DaangnWalker (가져오기와 같은 손),
  * 언제 돌지는 LiveReply (폰). 이 클래스는 순서만 이음. 차례가 어떻게 끝났는지는 outcome (LiveReply가 다음 차례를 정함)
@@ -62,6 +67,10 @@ class LiveTurn(
     var outcome = Outcome.BLOCKED
         private set
 
+    /** 멈춤 글자(보안 인증·이용 제한 등)로 멈췄으면 그 멈춤 — 접근성 서비스가 전체 멈춤 + 계정 상태 기록 (Safety) */
+    var alarm: DaangnWalker.Stop? = null
+        private set
+
     /** 결과 불명이 났는지 (그러면 시험을 꺼야 함) */
     val unknown: Boolean get() = outcome == Outcome.UNKNOWN
 
@@ -74,11 +83,15 @@ class LiveTurn(
         val sent = sentByApp(messages)
         val unknownSends = messages.count { it.sender == OURS && it.sendMethod == RESULT_UNKNOWN }
         val today = db.messageDao().recentByMethod(ReplyRules.SENT_BY_APP, 200).count { it.channel == DAANGN && sameDay(it.time, now()) }
-        LiveGate.block(config, a, sent.size, today, unknownSends)?.let { return end(Outcome.BLOCKED, "안 보냄 — $it") }
+        // 하루 한도: 이 지원의 공고를 올린 계정(모르면 지금 계정)의 한도와 시험 한도 중 작은 것
+        val account = a.standingPostId?.let { db.postDao().getStandingPost(it)?.accountId }?.let { db.accountDao().get(it) }
+            ?: AccountSync.current(db)
+        LiveGate.block(config, a, sent.size, today, unknownSends, LiveGate.dailyLimit(account))?.let { return end(Outcome.BLOCKED, "안 보냄 — $it") }
         note("'${a.name}' — ${config.mode.label} (앱이 보낸 당근 메시지 ${sent.size}개)")
         val result = try {
             visit(a, sent)
         } catch (e: DaangnWalker.Stop) {
+            if (e.alarm) alarm = e
             note("멈춤: ${e.message}")
             w.keepScreen("live_stopped")
             end(if (e.alarm) Outcome.ALARM else if (e.left) Outcome.LEFT else Outcome.STOPPED, "멈춤: ${e.message}")
@@ -100,7 +113,11 @@ class LiveTurn(
             else -> null
         }
         if (wrong != null) return leave(Outcome.BLOCKED, "안 보냄 — $wrong")
-        val bubbles = ChatRoomParser.window(room.nodes).filter { !it.isDate }.map { Conversation.Bubble(it.ours, it.text) }
+        val items = ChatRoomParser.window(room.nodes)
+        // 방에 보이는 메시지를 대화 표에 남김 (지원자 말은 앱 처리 기록대로 — 앱이 응대 중이면 처리 전)
+        val (lines, skipped) = ChatRoomParser.resolve(items, zone)
+        note("대화 표: " + ChatImport.save(db, a, lines, skipped))
+        val bubbles = items.filter { !it.isDate }.map { Conversation.Bubble(it.ours, it.text) }
         note("방 열림 — 말풍선 ${bubbles.size}개 (우리 ${bubbles.count { it.ours }} · 지원자 ${bubbles.count { !it.ours }})")
         return when (val next = Conversation.next(sent, bubbles, knownKey = a.phoneKey)) {
             is Conversation.Next.Wait -> leave(Outcome.WAITING, "기다림 — ${next.reason}")
@@ -192,7 +209,7 @@ class LiveTurn(
      */
     private suspend fun markOpened(a: Applicant) {
         val cur = db.applicantDao().get(a.id) ?: return
-        if (cur.status == ApplicantStatus.NEW && cur.reason.isBlank()) db.applicantDao().update(cur.copy(reason = ApplicantImport.APP_OPENED))
+        if (cur.status == ApplicantStatus.NEW && cur.reason.isBlank()) ApplicantStore.update(db, cur.copy(reason = ApplicantImport.APP_OPENED))
     }
 
     /** 채팅방이 다 뜰 때까지 (위쪽 이름·공고명과 입력창 — 새 방은 말풍선이 없음) */
@@ -268,7 +285,10 @@ class LiveTurn(
 
     // ---------- ⑦ 기록
 
-    /** 보낸 메시지를 대화 표에 남기고 지원자 상태를 바꿈 (결과 불명이면 메시지만 '결과 불명'으로) */
+    /**
+     * 보낸 메시지를 대화 표에 남기고 지원자 상태를 바꿈 (결과 불명이면 메시지만 '결과 불명'으로).
+     * 답한 지원자 메시지(보낸 때까지 처리 전인 것)는 '답함' — 상태를 바꾸기 전에 (보류 등으로 바뀌면 남은 처리 전은 '넘김')
+     */
     private suspend fun record(a: Applicant, next: Conversation.Next.Send, text: String, retryNo: Int, unknownResult: Boolean) {
         val t = now()
         db.messageDao().insert(
@@ -280,6 +300,9 @@ class LiveTurn(
         )
         db.applicantDao().touchLastMessage(a.id, t)
         if (unknownResult) return
+        db.messageDao().listFor(a.id)
+            .filter { it.sender == APPLICANT && it.appHandling == MessageCare.PENDING && it.time <= t }
+            .forEach { db.messageDao().update(it.copy(appHandling = HANDLED_REPLY)) }
         val cur = db.applicantDao().get(a.id) ?: return
         val updated = when (next.kind) {
             Conversation.Kind.FIRST -> cur.copy(status = ApplicantStatus.FIRST_SENT, reason = "")
@@ -291,18 +314,14 @@ class LiveTurn(
                 else ContactFlow.gotNumber(cur, f, ContactFlow.othersWith(db, cur, f.key)).updated ?: cur
             }
         }
-        db.applicantDao().update(updated)
+        ApplicantStore.update(db, updated)
         if (updated.status != cur.status) note("상태: '${cur.status}' → '${updated.status}'")
-        // 답한 지원자 메시지(알림으로 남은 것)는 앱 처리 '답함'
-        db.messageDao().listFor(a.id)
-            .filter { it.sender == APPLICANT && it.appHandling.isBlank() && it.time <= t }
-            .forEach { db.messageDao().update(it.copy(appHandling = HANDLED_REPLY)) }
     }
 
-    /** 사람에게 넘김: 상태를 바꾸고 사유를 적음 (풀면 멈추기 전 상태로) */
+    /** 사람에게 넘김: 상태를 바꾸고 사유를 적음 (풀면 멈추기 전 상태로). 처리 전 메시지는 '넘김'으로 (ApplicantStore) */
     private suspend fun handOver(a: Applicant, stop: Conversation.Next.Stop) {
         val cur = db.applicantDao().get(a.id) ?: return
-        db.applicantDao().update(cur.copy(status = stop.status, statusBeforeHold = cur.status, reason = stop.reason))
+        ApplicantStore.update(db, cur.copy(status = stop.status, statusBeforeHold = cur.status, reason = stop.reason))
     }
 
     // ---------- 도구
@@ -333,7 +352,7 @@ class LiveTurn(
 
     companion object {
         const val RESULT_UNKNOWN = "결과 불명"   // 대화 표 '보낸 방법' (DB 설계)
-        const val HANDLED_REPLY = "답함"         // 대화 표 '앱 처리'
+        const val HANDLED_REPLY = MessageCare.ANSWERED // 대화 표 '앱 처리'
         const val LOAD_MS = 8_000L               // 지원서가 뜨기를 기다리는 시간
         const val TYPE_WAIT_MS = 4_000L          // 입력창에 글자가 보이기를 기다리는 시간
         const val SEND_CONFIRM_MS = 10_000L      // 전송 뒤 방에 우리 말풍선이 보이기를 기다리는 시간

@@ -47,6 +47,8 @@ import com.kangsam.daangnrecruit.ApplicantStatus
 import com.kangsam.daangnrecruit.ApplicantView
 import com.kangsam.daangnrecruit.FeatureSettings
 import com.kangsam.daangnrecruit.HoldReason
+import com.kangsam.daangnrecruit.reply.MessageCare
+import com.kangsam.daangnrecruit.reply.ReplyScope
 import com.kangsam.daangnrecruit.ui.theme.AppText
 import com.kangsam.daangnrecruit.ui.theme.Palette
 
@@ -71,7 +73,7 @@ fun ApplicantsScreen(onOpenApplicant: (Long) -> Unit, onGoCheck: () -> Unit, mod
     val applicants by remember { db.applicantDao().observeAll() }.collectAsState(initial = emptyList())
     val posts by remember { db.postDao().observeStandingPosts() }.collectAsState(initial = emptyList())
     val postings by remember { db.postDao().observePostings() }.collectAsState(initial = emptyList())
-    val checkCount by remember { db.checkDao().observeCount() }.collectAsState(initial = 0)
+    val checkCount = rememberCheckCount()
     var filter by rememberSaveable { mutableStateOf(ApplicantFilter.TO_HANDLE) }
     var groupKey by rememberSaveable { mutableStateOf<String?>(null) }
     var daangnOn by remember { mutableStateOf(FeatureSettings.isOn(context, FeatureSettings.DAANGN_REPLY)) }
@@ -299,8 +301,21 @@ internal val INFO_LABELS = listOf("성함", "대학·학과", "교육 경험", "
 
 internal fun infoValues(a: Applicant) = listOf(a.realName, a.school, a.experience, a.availableTime, a.availablePeriod)
 
-/** 지금 하는 일 한 줄 (상태로) — 목록과 지원자 상세가 같이 씀 */
-internal fun nowDoing(a: Applicant): String = when (a.status) {
+/**
+ * 앱이 맡은 지원인지 (화면용 — 정하는 곳은 ReplyScope 한 곳). 앱이 안 맡은 지원(당근 응대를 켜기 전·꺼져 있던 동안 들어온 지원,
+ * 개발 중엔 실제 발송 시험 대상이 아닌 지원)은 사람이 응대 — 앱이 할 일을 보이지 않음.
+ * 예시 데이터는 화면 설계의 예시 상황(앱이 맡은 지원)대로 보여 줌 (예시에는 보내지 않음 — ReplyRules.notAutoReason)
+ */
+internal fun appOwns(a: Applicant): Boolean = a.isSample || ReplyScope.owns(a)
+
+/** 앱이 안 맡은 지원의 지금 하는 일 */
+internal const val NOT_OWNED_DOING = "앱이 안 맡은 지원 · 사람이 응대"
+
+/** 지금 하는 일 한 줄 (상태로) — 목록과 지원자 상세가 같이 씀. 앱이 응대하는 상태인데 앱이 안 맡은 지원이면 그렇다고 */
+internal fun nowDoing(a: Applicant): String =
+    if (a.status in MessageCare.HANDLING && !appOwns(a)) NOT_OWNED_DOING else statusDoing(a)
+
+private fun statusDoing(a: Applicant): String = when (a.status) {
     ApplicantStatus.NEW -> "첫 메시지 보낼 차례"
     ApplicantStatus.FIRST_SENT ->
         "번호 기다리는 중" + (Regex("번호 다시 요청 (\\d+)번").find(a.reason)?.let { " (다시 요청 ${it.groupValues[1]}번)" } ?: "")

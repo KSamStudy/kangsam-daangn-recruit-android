@@ -1,10 +1,13 @@
 package com.kangsam.daangnrecruit
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-// DB 설계 v0.6의 표를 그대로 옮김. 열 이름은 영어, 뜻은 주석(문서의 열 이름)
+// DB 설계(v0.10)의 표를 그대로 옮김. 열 이름은 영어, 뜻은 주석(문서의 열 이름)
+// 표 구조를 바꾸면: AppDatabase 버전을 1 올리고 Migrations.kt에 옮기기 코드를 더함 (폰 기록을 지우지 않게).
+// 새 열은 옛 줄에 넣을 값이 있어야 해서 기본값을 둠 (@ColumnInfo(defaultValue) — 옮기기 코드의 DEFAULT와 같게)
 // isSample = 개발용 예시 데이터 표시. 설정 → 알림 기록 (개발용)에서 한 번에 지움
 
 /** 1. 계정 */
@@ -85,9 +88,11 @@ data class Posting(
     val lastBumpAt: Long? = null,       // 끌어올리기 마지막 시각
     val closedAt: Long? = null,         // 마감 시각
     val closedBy: String = "",          // 마감한 쪽: 담당자 / 앱
+    @ColumnInfo(defaultValue = "")
+    val closeReason: String = "",       // 마감 이유: '마감했어요' 때 고른 것(채용 끝남 / 그 밖 한 줄), 앱이 마감하면 앱 조건 / 다음 회차로 교체, '내 공고'에서 처음 알면 빈 칸 (사유와 따로 — 표 구조 4)
     val closeCheckedAt: Long? = null,   // 마감 확인: 때
     val closeCheckMethod: String = "",  // 마감 확인: 방법
-    val reason: String = "",            // 사유
+    val reason: String = "",            // 사유 (건너뜀·검사 걸림·당근 안내 문구·'내 공고 화면에서 가져옴' — 마감 이유는 closeReason)
     val isSample: Boolean = false,
 )
 
@@ -116,7 +121,7 @@ data class Applicant(
     val reason: String = "",            // 사유
     val mergedInto: Long? = null,       // 합친 곳
     val sameCandidate: String = "",     // 같은 사람 후보 (표시만)
-    val contactingMark: String = "",    // 연락 중 표시 (누가·언제)
+    val contactingMark: String = "",    // 연락 중 표시: 어디서·언제 (예: 직접 연락하기 · 10/19 21:40 — 누가는 안 적음). 같은 번호 줄에 같이 (ApplicantStore)
     val linearTicket: String = "",      // 리니어 티켓
     val handedOverAt: Long? = null,     // 넘긴 시각
     val appliedAt: Long,                // 지원 시각
@@ -173,4 +178,16 @@ object ApplicantStatus {
 object HoldReason {
     const val POST_NOT_FOUND = "공고 못 찾음"
     const val MERGE = "합치기 보류"
+    private const val SEP = " — "
+    private const val DAANGN_STATUS = "당근 상태:"
+
+    /** '공고 못 찾음' 사유. 당근 상태(지원자 목록에서 읽은 '당근 상태: 연락중' 등)를 뒤에 붙여 두면 풀릴 때 되살림 */
+    fun postNotFound(keep: String = ""): String = if (keep.isBlank()) POST_NOT_FOUND else "$POST_NOT_FOUND$SEP$keep"
+
+    /** 보류·담당자 확인을 풀 때 남길 사유: '공고 못 찾음 — 당근 상태: …'면 '당근 상태: …', 그 밖은 빈 칸 */
+    fun restore(reason: String): String {
+        if (!reason.startsWith(POST_NOT_FOUND + SEP)) return ""
+        val kept = reason.substringAfter(SEP)
+        return if (kept.startsWith(DAANGN_STATUS)) kept else ""
+    }
 }

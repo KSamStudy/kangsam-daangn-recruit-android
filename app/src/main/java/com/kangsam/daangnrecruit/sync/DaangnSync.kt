@@ -39,8 +39,41 @@ object DaangnSync {
     /** 기능 스위치 (기본 꺼짐) */
     fun isOn(context: Context): Boolean = prefs(context).getBoolean("enabled", false)
 
-    /** 지금 돌아도 되는지: 스위치가 켜져 있고 '전체 멈춤'이 아님 */
-    fun canRun(context: Context): Boolean = isOn(context) && !FeatureSettings.isOn(context, FeatureSettings.ALL_STOP)
+    /**
+     * 지금 돌아도 되는지: 스위치가 켜져 있고 '전체 멈춤'이 아니고 나의 당근 닉네임이 앱 계정과 다르지 않음
+     * (닉네임이 다른 동안은 버튼 가져오기·사람이 연 화면 맞추기·대화 알림 기록을 안 함 — 설정 '계정'에서 풀 때까지)
+     */
+    fun canRun(context: Context): Boolean =
+        isOn(context) && !FeatureSettings.isOn(context, FeatureSettings.ALL_STOP) && nicknameMismatch(context) == null
+
+    private val _mismatch = MutableStateFlow<String?>(null)
+
+    @Volatile
+    private var mismatchLoaded = false
+
+    /** 나의 당근 닉네임이 앱 계정과 달라 멈춘 동안 그 닉네임 (아니면 null) — 화면이 지켜봄 (확인 탭 카드·숫자, 설정 '계정') */
+    fun mismatchFlow(context: Context): StateFlow<String?> {
+        loadMismatch(context)
+        return _mismatch
+    }
+
+    fun nicknameMismatch(context: Context): String? {
+        loadMismatch(context)
+        return _mismatch.value
+    }
+
+    /** 닉네임 다름을 남기거나(가져오기가 멈출 때) 풂(null — 계정을 맞췄을 때·설정에서 정했을 때) */
+    fun setNicknameMismatch(context: Context, nickname: String?) {
+        prefs(context).edit().putString("nickname_mismatch", nickname).apply()
+        mismatchLoaded = true
+        _mismatch.value = nickname
+    }
+
+    private fun loadMismatch(context: Context) {
+        if (mismatchLoaded) return
+        _mismatch.value = prefs(context).getString("nickname_mismatch", null)
+        mismatchLoaded = true
+    }
 
     fun setOn(context: Context, on: Boolean) {
         prefs(context).edit().putBoolean("enabled", on).apply()
@@ -86,6 +119,7 @@ object DaangnSync {
     /** 설정의 '당근에서 가져오기' 버튼: 한 번 돌기 시작. 안내 한 줄을 돌려줌 */
     fun start(context: Context): String {
         if (!isOn(context)) return "'당근 가져오기'가 꺼져 있어요 — 위 스위치를 켜요"
+        nicknameMismatch(context)?.let { return "나의 당근 닉네임('$it')이 앱 계정과 달라 멈춰 있어요 — 아래 '계정'에서 정해요" }
         if (!canRun(context)) return "'전체 멈춤'이 켜져 있어서 안 돌아요"
         val host = DaangnAccessibilityService.instance
             ?: return "접근성(당근 화면 읽기)이 꺼져 있어요 — 폰 설정 → 접근성에서 켜요"

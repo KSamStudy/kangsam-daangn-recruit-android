@@ -30,6 +30,10 @@ class FirstMessageDryRun(
 ) {
     /** 한 일 (지원자 상세 '드라이런 기록') */
     val log = mutableListOf<String>()
+
+    /** 멈춤 글자(보안 인증·이용 제한 등)로 멈췄으면 그 멈춤 — 접근성 서비스가 전체 멈춤 + 계정 상태 기록 (Safety) */
+    var alarm: DaangnWalker.Stop? = null
+        private set
     private val w = DaangnWalker(driver, ::note, random)
 
     /** 방에 가 본 결과 */
@@ -51,6 +55,7 @@ class FirstMessageDryRun(
         val visit = try {
             visitRoom(a, text).also { tidyChatList() }
         } catch (e: DaangnWalker.Stop) {
+            if (e.alarm) alarm = e
             note("멈춤: ${e.message}")
             w.keepScreen("stopped")
             driver.openApp()

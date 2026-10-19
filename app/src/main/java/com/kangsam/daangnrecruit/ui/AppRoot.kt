@@ -31,7 +31,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,13 +42,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import com.kangsam.daangnrecruit.AppDatabase
 import com.kangsam.daangnrecruit.ui.theme.AppIcons
 import com.kangsam.daangnrecruit.ui.theme.AppText
 import com.kangsam.daangnrecruit.ui.theme.Palette
@@ -78,9 +75,8 @@ fun AppRoot(refreshTick: Int) {
     var editingPostId by rememberSaveable { mutableStateOf<Long?>(null) } // 공고 편집 (0 = 새 공고)
     var showNotificationLog by rememberSaveable { mutableStateOf(false) } // 알림 기록 (개발용)
 
-    val context = LocalContext.current
     // 확인 탭 숫자 = 확인 필요 건수 (화면 설계 공통 — 홈 '오늘'의 확인 필요와 같은 수)
-    val checkCount by remember { AppDatabase.get(context).checkDao().observeCount() }.collectAsState(initial = 0)
+    val checkCount = rememberCheckCount()
 
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -147,7 +143,7 @@ fun AppRoot(refreshTick: Int) {
                                 onGoCheck = { currentTab = AppTab.CHECK },
                             )
                             AppTab.POSTS -> PostsScreen(onEditPost = { editingPostId = it })
-                            AppTab.CHECK -> CheckScreen(onOpenApplicant = { applicantId = it })
+                            AppTab.CHECK -> CheckScreen(onOpenApplicant = { applicantId = it }, onOpenSettings = { currentTab = AppTab.SETTINGS })
                             AppTab.SETTINGS -> SettingsScreen(
                                 refreshTick = refreshTick,
                                 onOpenNotificationLog = { showNotificationLog = true },

@@ -60,7 +60,7 @@ object SampleData {
                 standingPostId = standingId, round = 1, scheduledAt = now - 16 * DAY, accountId = accountId, textVersion = 1,
                 title = TITLE, postedBy = "앱 자동", postedAt = now - 16 * DAY, status = "마감", watchResult = "통과",
                 closedAt = now - 13 * DAY, closedBy = "담당자", closeCheckedAt = now - 13 * DAY,
-                closeCheckMethod = "담당자의 '마감했어요' 뒤 '내 공고' 확인", reason = "채용 끝남", isSample = true,
+                closeCheckMethod = "담당자의 '마감했어요' 뒤 '내 공고' 확인", closeReason = "채용 끝남", isSample = true,
             )
         )
         val round2 = posts.insertPosting(
@@ -68,7 +68,7 @@ object SampleData {
                 standingPostId = standingId, round = 2, scheduledAt = now - 13 * DAY + 2 * HOUR, accountId = accountId, textVersion = 1,
                 title = TITLE, postedBy = "앱 자동", postedAt = now - 13 * DAY + 2 * HOUR, status = "마감", watchResult = "통과",
                 closedAt = now - 5 * DAY, closedBy = "담당자", closeCheckedAt = now - 5 * DAY + 3 * HOUR,
-                closeCheckMethod = "'내 공고' 확인", reason = "채용 끝남", isSample = true,
+                closeCheckMethod = "'내 공고' 확인", closeReason = "채용 끝남", isSample = true,
             )
         )
         val round3 = posts.insertPosting(

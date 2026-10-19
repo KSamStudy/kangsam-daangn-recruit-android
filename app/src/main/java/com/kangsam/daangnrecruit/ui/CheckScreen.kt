@@ -38,6 +38,7 @@ import com.kangsam.daangnrecruit.ApplicantStatus
 import com.kangsam.daangnrecruit.CheckActions
 import com.kangsam.daangnrecruit.HoldReason
 import com.kangsam.daangnrecruit.Posting
+import com.kangsam.daangnrecruit.sync.DaangnSync
 import com.kangsam.daangnrecruit.ui.theme.AppText
 import com.kangsam.daangnrecruit.ui.theme.Palette
 import kotlinx.coroutines.launch
@@ -55,7 +56,7 @@ private fun kindOf(a: Applicant): CardKind = when {
 }
 
 @Composable
-fun CheckScreen(onOpenApplicant: (Long) -> Unit, modifier: Modifier = Modifier) {
+fun CheckScreen(onOpenApplicant: (Long) -> Unit, onOpenSettings: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val db = remember { AppDatabase.get(context) }
     val scope = rememberCoroutineScope()
@@ -67,6 +68,7 @@ fun CheckScreen(onOpenApplicant: (Long) -> Unit, modifier: Modifier = Modifier) 
     val posts by remember { db.postDao().observeStandingPosts() }.collectAsState(initial = emptyList())
     val problemPostings by remember { db.postDao().observeProblemPostings() }.collectAsState(initial = emptyList())
     val livePostings by remember { db.postDao().observeLivePostings() }.collectAsState(initial = emptyList())
+    val mismatch by remember { DaangnSync.mismatchFlow(context) }.collectAsState() // 닉네임이 달라 멈춘 당근 가져오기
 
     // 버튼을 누르면 DB를 고치고, 결과 한 줄을 화면 아래 띠로
     fun act(done: String, block: suspend () -> Unit) {
@@ -74,7 +76,7 @@ fun CheckScreen(onOpenApplicant: (Long) -> Unit, modifier: Modifier = Modifier) 
     }
 
     val postName = posts.associate { it.id to it.name }
-    val total = held.size + problemPostings.size
+    val total = held.size + problemPostings.size + (if (mismatch != null) 1 else 0)
 
     LazyColumn(
         modifier = modifier.fillMaxSize().statusBarsPadding(),
@@ -85,17 +87,25 @@ fun CheckScreen(onOpenApplicant: (Long) -> Unit, modifier: Modifier = Modifier) 
         if (total == 0) {
             item(key = "empty") { EmptyNote("지금 확인할 일이 없어요", Modifier.padding(horizontal = 16.dp)) }
         }
+        mismatch?.let { nick ->
+            item(key = "nickname") { NicknameCard(nick, Modifier.padding(horizontal = 16.dp), onOpenSettings) }
+        }
         items(held, key = { "a${it.id}" }) { a ->
             val cardModifier = Modifier.padding(horizontal = 16.dp)
             val where = a.standingPostId?.let { postName[it] }?.let { shortPostName(it) }
             when (kindOf(a)) {
                 CardKind.MERGE -> {
-                    val other = all.firstOrNull { it.id != a.id && it.phoneKey.isNotBlank() && it.phoneKey == a.phoneKey }
+                    // 견줄 상대: 같은 번호의 끝나지 않은 줄, 같은 공고 먼저 (CheckActions.mergeTarget)
+                    val other = CheckActions.mergeTarget(a, all)
                     MergeCard(
                         a = a, where = where, other = other, modifier = cardModifier,
                         onOpen = { onOpenApplicant(a.id) },
                         onSeparate = { act("${a.name}: 다른 사람으로 두고 진행해요") { CheckActions.separate(db, a) } },
-                        onMerge = { o -> act("${a.name}·${o.name}: 같은 사람으로 합쳤어요") { CheckActions.merge(db, a, o) } },
+                        onMerge = { o ->
+                            val done = if (CheckActions.samePost(a, o)) "${a.name}·${o.name}: 같은 사람으로 합쳤어요"
+                            else "${a.name}·${o.name}: 같은 사람으로 이었어요 — 다른 공고라 줄은 따로 둬요"
+                            act(done) { CheckActions.merge(db, a, o) }
+                        },
                     )
                 }
                 CardKind.POST_NOT_FOUND -> PostNotFoundCard(
@@ -196,14 +206,16 @@ private fun MergeCard(
         val text = when {
             other == null -> "같은 번호인 다른 지원 건을 못 찾았어요. 정하기 전까지 자동 문자를 보내지 않아요."
             else -> {
-                val samePost = other.standingPostId != null && other.standingPostId == a.standingPostId
+                val samePost = CheckActions.samePost(a, other)
                 val place = if (samePost) "같은 공고에" else "다른 공고('${other.postTitle.ifBlank { "공고명 없음" }}')에"
                 val names = if (other.name != a.name) "${withWaGwa(other.name)} 이름이 달라요." else "${other.name} 건이 있어요."
                 "$place 같은 번호로 지원한 $names 정하기 전까지 자동 문자를 보내지 않아요."
             }
         }
         Reason("합치기 확인", text)
-        TwoButtons("다른 사람 (따로)", onSeparate, "같은 사람 (합침)", { if (other != null) onMerge(other) }, rightEnabled = other != null)
+        // 같은 공고면 합침(나중 줄을 '합침'), 다른 공고면 연결(줄은 따로 두고 같은 사람으로 봄) — DB 설계 '합치기 기록'
+        val same = if (other != null && !CheckActions.samePost(a, other)) "같은 사람 (연결)" else "같은 사람 (합침)"
+        TwoButtons("다른 사람 (따로)", onSeparate, same, { if (other != null) onMerge(other) }, rightEnabled = other != null)
     }
 }
 
@@ -264,6 +276,15 @@ private fun OtherHoldCard(a: Applicant, where: String?, modifier: Modifier, onOp
     CheckCard(a.name, where ?: a.postTitle, a.status, modifier, onOpen = onOpen) {
         Reason("보류", a.reason.ifBlank { "이유가 적혀 있지 않아요" })
         Text("이 카드의 버튼은 아직 정하지 않았어요 (화면 설계 '정할 것')", style = AppText.Caption, color = Palette.Muted)
+    }
+}
+
+/** 닉네임이 달라 멈춘 당근 가져오기 (화면 설계 '확인 필요' — 누르면 설정 '계정'에서 같은 계정인지 다른 계정인지 정함) */
+@Composable
+private fun NicknameCard(nickname: String, modifier: Modifier, onOpenSettings: () -> Unit) {
+    CheckCard("당근 가져오기", "나의 당근 닉네임 '$nickname'", "멈춤", modifier, tone = Tone.AMBER, onOpen = onOpenSettings) {
+        Reason("닉네임이 다름", "이 폰 당근의 닉네임이 앱에 등록된 계정과 달라 가져오기와 사람이 연 화면 맞추기를 멈췄어요. 같은 계정인지 다른 계정인지 정해 주세요.")
+        AppButton("설정 '계정'에서 정하기", onClick = onOpenSettings, modifier = Modifier.fillMaxWidth(), kind = ButtonKind.DARK)
     }
 }
 

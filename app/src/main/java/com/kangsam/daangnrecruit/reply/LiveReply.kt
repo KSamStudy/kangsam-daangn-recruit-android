@@ -6,7 +6,9 @@ import android.util.Log
 import com.kangsam.daangnrecruit.AppDatabase
 import com.kangsam.daangnrecruit.Applicant
 import com.kangsam.daangnrecruit.ApplicantStatus
+import com.kangsam.daangnrecruit.ApplicantStore
 import com.kangsam.daangnrecruit.DaangnAccessibilityService
+import com.kangsam.daangnrecruit.DbOpen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -70,7 +72,7 @@ object LiveReply {
     fun onApplied(context: Context, applicantId: Long) {
         val app = context.applicationContext
         scope.launch {
-            val a = AppDatabase.get(app).applicantDao().get(applicantId) ?: return@launch
+            val a = DbOpen.db(app)?.applicantDao()?.get(applicantId) ?: return@launch
             if (!LiveGate.isTarget(LiveSettings.config(app), a)) return@launch
             Log.i(TAG, "시험 대상 지원 알림")
             schedule(app, a.id, Random.nextLong(APPLIED_MIN_MS, APPLIED_MAX_MS), "지원 알림")
@@ -109,6 +111,19 @@ object LiveReply {
         }
     }
 
+    /**
+     * 시험 모드·대상이 바뀐 뒤: 앱이 이제 응대하지 않는 지원자의 처리 전 메시지를 '넘김'으로 (앱 처리 기록 — ApplicantStore.settleAll).
+     * 시험을 끄면 아무도 안 맡으므로 남은 처리 전은 모두 넘김
+     */
+    fun settleLater(context: Context) {
+        val app = context.applicationContext
+        scope.launch {
+            runCatching { DbOpen.db(app)?.let { ApplicantStore.settleAll(it) } }
+                .onSuccess { n -> if (n != null && n > 0) Log.i(TAG, "처리 전 메시지 ${n}개 → 넘김") }
+                .onFailure { Log.e(TAG, "앱 처리 기록 맞추기 오류", it) }
+        }
+    }
+
     /** '끔'으로 바꿀 때: 잡아 둔 차례를 모두 취소 (돌고 있는 차례는 끝까지 — 멈추려면 홈 버튼) */
     fun cancelAll() {
         pending.values.forEach { it.cancel() }
@@ -124,7 +139,7 @@ object LiveReply {
      * 이 사람의 번호·상태는 LiveTurn이 채팅방을 보고 정함 — 번호가 틀리면 다시 요청해야 해서 (10/18 재걸)
      */
     suspend fun owns(context: Context, applicantId: Long): Boolean {
-        val a = AppDatabase.get(context).applicantDao().get(applicantId) ?: return false
+        val a = DbOpen.db(context)?.applicantDao()?.get(applicantId) ?: return false
         return LiveGate.isTarget(LiveSettings.config(context), a)
     }
 
@@ -152,7 +167,7 @@ object LiveReply {
             if (manual) say("안 돎 — $it")
             return
         }
-        val db = AppDatabase.get(ctx)
+        val db = DbOpen.db(ctx) ?: return
         val a = db.applicantDao().get(id) ?: return
         if (closed(db, a)) {
             if (manual) say("'${a.name}' — 마무리까지 보냄 (더 할 일 없음)")
@@ -210,6 +225,7 @@ object LiveReply {
             LiveTurn.Outcome.UNKNOWN, LiveTurn.Outcome.ALARM -> {
                 LiveSettings.setMode(ctx, LiveGate.Mode.OFF)
                 cancelAll()
+                settleLater(ctx)
                 say(
                     if (outcome == LiveTurn.Outcome.UNKNOWN) "결과 불명 — 시험을 껐어요. 운영폰·테스트 폰 채팅방을 본 뒤 다시 켜요"
                     else "멈춤 글자가 보여 시험을 껐어요 — 당근 화면을 사람이 확인해 주세요"
@@ -242,7 +258,7 @@ object LiveReply {
     private suspend fun active(ctx: Context): List<Applicant> {
         val cfg = LiveSettings.config(ctx)
         if (LiveGate.configProblem(cfg) != null) return emptyList()
-        val db = AppDatabase.get(ctx)
+        val db = DbOpen.db(ctx) ?: return emptyList()
         return db.applicantDao().nonSample().filter { a -> LiveGate.isTarget(cfg, a) && a.status in LiveGate.HANDLED && !closed(db, a) }
     }
 
