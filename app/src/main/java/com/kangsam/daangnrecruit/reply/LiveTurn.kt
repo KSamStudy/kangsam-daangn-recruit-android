@@ -12,10 +12,8 @@ import com.kangsam.daangnrecruit.sync.ChatRoomParser
 import com.kangsam.daangnrecruit.sync.DaangnNav
 import com.kangsam.daangnrecruit.sync.DaangnPage
 import com.kangsam.daangnrecruit.sync.DaangnWalker
-import com.kangsam.daangnrecruit.sync.MyPostParser
 import com.kangsam.daangnrecruit.sync.ScreenDriver
 import com.kangsam.daangnrecruit.sync.Snapshot
-import com.kangsam.daangnrecruit.sync.UiNode
 import java.time.Instant
 import java.time.ZoneId
 import kotlin.random.Random
@@ -32,8 +30,8 @@ import kotlin.random.Random
  * 부품마다 따로: 판단은 LiveGate·Conversation, 칸 찾기는 LiveNav (모두 순수 코드), 화면 옮기기는 DaangnWalker (가져오기와 같은 손),
  * 언제 돌지는 LiveReply (폰). 이 클래스는 순서만 이음. 차례가 어떻게 끝났는지는 outcome (LiveReply가 다음 차례를 정함)
  *
- * 방 열기: 처음(앱이 보낸 게 없음)은 나의 당근 → 공고 → 지원자 보기 → 그 사람 카드 → 읽은 카드면 아래 '채팅하기',
- *   안 읽은 카드면 지원서 → '채팅하기' (지원서에 없으면 목록으로 돌아와 카드의 '채팅하기').
+ * 방 열기 (RoomRoute — 첫 메시지 드라이런과 같은 길): 처음(앱이 보낸 게 없음)은 나의 당근 → 공고 → 지원자 보기 → 그 사람 카드 →
+ *   읽은 카드면 아래 '채팅하기', 안 읽은 카드면 지원서 → '채팅하기' (지원서에 없으면 목록으로 돌아와 카드의 '채팅하기').
  *   그다음부터는 채팅 목록 맨 위 화면의 그 사람 방 (안 보이면 지원자 목록 길로)
  * 결과 불명(전송을 눌렀는데 방에 안 보임) → 다시 보내지 않음 · 기록은 '결과 불명' · outcome UNKNOWN (LiveReply가 시험을 끔)
  */
@@ -75,6 +73,7 @@ class LiveTurn(
     val unknown: Boolean get() = outcome == Outcome.UNKNOWN
 
     private val w = DaangnWalker(driver, ::note, random)
+    private val route = RoomRoute(w, db, ::note, ApplicantImport.APP_OPENED, "live")
 
     /** 한 차례 돌고 한 줄 결과를 돌려줌 */
     suspend fun run(): String {
@@ -149,75 +148,13 @@ class LiveTurn(
             note("채팅 목록 맨 위 화면에 '${a.name}' 방이 없음 → 지원자 목록에서 찾음")
             return null
         }
-        w.tap("채팅방 '${a.name}'", safe(LiveNav.Purpose.ROOM_ROW, a)) { LiveNav.roomRow(it, a.name, a.area) }
+        w.tap("채팅방 '${a.name}'", route.safe(LiveNav.Purpose.ROOM_ROW, a)) { LiveNav.roomRow(it, a.name, a.area) }
         w.expect(DaangnPage.CHAT_ROOM)
-        return roomLoaded()
+        return route.roomLoaded()
     }
 
-    /** 나의 당근 → 공고 → 지원자 보기 → 그 사람 카드 → '채팅하기' (당근 가져오기와 같은 길) */
-    private suspend fun fromApplicants(a: Applicant): Snapshot {
-        val here = driver.current() ?: throw DaangnWalker.Stop("당근 화면을 벗어나서 멈췄어요", left = true)
-        w.tab(here, "나의 당근", DaangnPage.MY_PAGE)
-        w.loaded(DaangnPage.MY_PAGE) { p -> DaangnNav.myPostCards(p.nodes).any { it.second == a.postTitle } }
-        w.tap("공고 '${a.postTitle}'") { nodes -> DaangnNav.myPostCards(nodes).firstOrNull { it.second == a.postTitle }?.first }
-        w.waitFor { MyPostParser.parse(it.screenNodes) != null } ?: throw DaangnWalker.Stop("공고 상세가 안 떠서 멈췄어요")
-        w.tap("지원자 보기") { DaangnNav.applicantsButton(it) }
-        w.expect(DaangnPage.APPLICANT_LIST)
-        val list = w.loaded(DaangnPage.APPLICANT_LIST) { LiveNav.applicantCard(it.nodes, a.name) != null }
-        val card = LiveNav.applicantCard(list.nodes, a.name)
-        if (card == null) {
-            w.keepScreen("live_applicants", list)
-            throw DaangnWalker.Stop("지원자 목록에서 '${a.name}' 카드를 못 찾음 (막 지원했으면 목록에 아직 안 떴을 수 있음)")
-        }
-        if (LiveNav.cardChatButton(list.nodes, card) != null) return cardChat(a)
-
-        // 안 읽은 카드 → 지원서 → '채팅하기' (지원서 화면은 처음이라 남겨 둠)
-        w.tap("'${a.name}' 지원서", safe(LiveNav.Purpose.CARD, a)) { LiveNav.applicantCard(it, a.name) }
-        markOpened(a)
-        val app = w.waitFor(timeoutMs = LOAD_MS) { s ->
-            s.page != DaangnPage.APPLICANT_LIST && s.nodes.any { it.text.contains(a.name) } && LiveNav.chatButton(s.nodes) != null
-        }
-        w.keepScreen("live_application", app)
-        if (app != null) {
-            w.tap("지원서의 채팅하기", safe(LiveNav.Purpose.CHAT_BUTTON, a)) { nodes ->
-                if (DaangnNav.page(nodes) == DaangnPage.APPLICANT_LIST) null else LiveNav.chatButton(nodes)
-            }
-            w.expect(DaangnPage.CHAT_ROOM)
-            return roomLoaded()
-        }
-        // 지원서에 '채팅하기'가 안 보임 → 지원자 목록으로 돌아와 카드(이제 읽은 카드)의 '채팅하기'
-        note("지원서에서 '채팅하기'를 못 찾음 → 지원자 목록으로 돌아가 카드의 '채팅하기'")
-        if (driver.current()?.page != DaangnPage.APPLICANT_LIST) w.back("지원서")
-        w.loaded(DaangnPage.APPLICANT_LIST) { s ->
-            LiveNav.applicantCard(s.nodes, a.name)?.let { c -> LiveNav.cardChatButton(s.nodes, c) } != null
-        }
-        return cardChat(a)
-    }
-
-    /** 지원자 목록 카드 아래 '채팅하기' → 채팅방 */
-    private suspend fun cardChat(a: Applicant): Snapshot {
-        w.tap("'${a.name}' 카드의 채팅하기", safe(LiveNav.Purpose.CHAT_BUTTON, a)) { nodes ->
-            LiveNav.applicantCard(nodes, a.name)?.let { c -> LiveNav.cardChatButton(nodes, c) }
-        }
-        w.expect(DaangnPage.CHAT_ROOM)
-        return roomLoaded()
-    }
-
-    /**
-     * 앱이 안 읽은 지원서를 열었음을 적어 둠: 당근에선 읽은 카드가 되는데, 당근 가져오기가 그 카드를 보고
-     * '담당자가 봄 → 담당자 응대 중'으로 바꾸지 않게 (ApplicantImport.APP_OPENED — 연습 뒤 실제 발송으로 이어 가려고)
-     */
-    private suspend fun markOpened(a: Applicant) {
-        val cur = db.applicantDao().get(a.id) ?: return
-        if (cur.status == ApplicantStatus.NEW && cur.reason.isBlank()) ApplicantStore.update(db, cur.copy(reason = ApplicantImport.APP_OPENED))
-    }
-
-    /** 채팅방이 다 뜰 때까지 (위쪽 이름·공고명과 입력창 — 새 방은 말풍선이 없음) */
-    private suspend fun roomLoaded(): Snapshot =
-        w.loaded(DaangnPage.CHAT_ROOM) { r -> ChatRoomParser.header(r.nodes) != null && LiveNav.input(r.nodes) != null }
-
-    private fun safe(purpose: LiveNav.Purpose, a: Applicant): (List<UiNode>, Int) -> Boolean =
-        { nodes, i -> LiveNav.isSafe(nodes, i, purpose, a.name) }
+    /** 나의 당근 → 공고 → 지원자 보기 → 그 사람 카드 → (지원서 →) '채팅하기' (RoomRoute — 드라이런과 같은 길) */
+    private suspend fun fromApplicants(a: Applicant): Snapshot = route.roomFromCard(a, route.applicantCard(a))
 
     // ---------- ⑤⑥ 보내기
 
@@ -242,7 +179,7 @@ class LiveTurn(
             return leave(Outcome.REHEARSED, "연습 — '${next.kind.label}' 문구를 입력창에 쓰고 대조 · 전송 칸 확인까지 함 · 지우고 나옴 (전송 안 함)")
         }
         val before = mine(typed, text)
-        w.tap("전송", safe(LiveNav.Purpose.SEND, a)) { LiveNav.sendButton(it) }
+        w.tap("전송", route.safe(LiveNav.Purpose.SEND, a)) { LiveNav.sendButton(it) }
         val shown = w.waitFor(timeoutMs = SEND_CONFIRM_MS) { it.page == DaangnPage.CHAT_ROOM && mine(it, text) > before }
         if (shown == null) {
             w.keepScreen("live_unknown")
@@ -353,7 +290,6 @@ class LiveTurn(
     companion object {
         const val RESULT_UNKNOWN = "결과 불명"   // 대화 표 '보낸 방법' (DB 설계)
         const val HANDLED_REPLY = MessageCare.ANSWERED // 대화 표 '앱 처리'
-        const val LOAD_MS = 8_000L               // 지원서가 뜨기를 기다리는 시간
         const val TYPE_WAIT_MS = 4_000L          // 입력창에 글자가 보이기를 기다리는 시간
         const val SEND_CONFIRM_MS = 10_000L      // 전송 뒤 방에 우리 말풍선이 보이기를 기다리는 시간
         const val CLEAR_PAUSE_MS = 600L

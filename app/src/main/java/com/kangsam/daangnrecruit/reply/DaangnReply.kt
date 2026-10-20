@@ -36,7 +36,8 @@ object DaangnReply {
         _status.value = "시작"
         val app = context.applicationContext
         host.runDryRun(applicantId) { result, log -> finished(app, applicantId, result, log) }
-        return "당근을 열어 이 지원자 채팅방까지 가 봐요 — 입력·전송은 안 해요. 끝날 때까지 폰을 만지지 마세요 (멈추려면 홈 버튼)"
+        return "당근을 열어 이 지원자 채팅방까지 가 봐요 (채팅 전이면 공고의 지원자 목록에서 들어가요) — 입력·전송은 안 해요. " +
+            "끝날 때까지 폰을 만지지 마세요 (멈추려면 홈 버튼)"
     }
 
     /** 지금 하는 일 한 줄 바꾸기 */

@@ -572,7 +572,8 @@ private fun ContactFooter(a: Applicant) {
 
 /**
  * 개발용: 당근 첫 메시지 드라이런 (사용자 프로세스 B2). 앱이 이 지원자 채팅방까지 가서
- * 보낼 문구·발송 전 검사·실제라면 보낼지만 보여줌. 입력창에 쓰거나 전송하지 않고, 앱 기록도 바꾸지 않음
+ * 보낼 문구·발송 전 검사·실제라면 보낼지만 보여줌. 입력창에 쓰거나 전송하지 않음.
+ * 채팅 전인 새 지원자는 공고 → 지원자 목록 → 지원서 → '채팅하기'로 들어감 (앱 기록엔 지원서를 열었다는 사유만 — FirstMessageDryRun)
  */
 @Composable
 private fun DryRunCard(applicantId: Long) {
@@ -597,7 +598,8 @@ private fun DryRunCard(applicantId: Long) {
             enabled = !DaangnReply.running,
         )
         Text(
-            "앱이 당근 채팅 탭에서 이 지원자 방을 열고, 보낼 문구와 실제라면 보낼지만 보여줘요. 안 읽은 방은 열지 않아요.",
+            "채팅 전인 지원자는 공고 → 지원자 목록 → 지원서 → '채팅하기'로, 채팅한 적이 있으면 채팅 탭에서 방을 열어요. " +
+                "보낼 문구와 실제라면 보낼지만 보여주고 입력·전송은 안 해요. 안 읽은 지원서는 열면 당근에서 읽음으로 바뀌어요.",
             style = AppText.Caption,
             color = Palette.Muted,
         )
