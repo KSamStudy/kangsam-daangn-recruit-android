@@ -46,24 +46,38 @@ object LiveGate {
         c.mode != Mode.OFF && c.testName.isNotBlank() && !a.isSample && a.name.trim() == c.testName.trim() &&
             a.appliedAt >= c.armedAt - ARM_MARGIN_MS
 
+    /** 보내면 안 되는 이유의 갈래 — 그 뒤 할 일이 달라짐 (ReplyTasks) */
+    enum class BlockKind {
+        PAUSED,   // 설정 때문에 지금은 안 돎 (시험 꺼짐·전체 멈춤·당근 응대 꺼짐) → 할 일 그대로, 켜지면 이어서
+        NOT_MINE, // 앱이 맡을 사람이 아님 (대상 아님·사람이 맡음·보낼 단계가 아님·공고 못 찾음 보류) → 할 일 지움
+        TOMORROW, // 오늘 한도 → 다음 날 아침
+        CANT,     // 앱이 더 못 함 (결과 불명이 남음·한 사람 한도) → 담당자 확인
+    }
+
+    data class Block(val reason: String, val kind: BlockKind)
+
     /**
-     * 지금 이 지원자에게 보내면 안 되는 이유 (없으면 null). sentToApplicant·sentToday = 앱이 보낸 당근 메시지 수,
+     * 지금 이 지원자에게 보내면 안 되는 이유와 갈래 (없으면 null). sentToApplicant·sentToday = 앱이 보낸 당근 메시지 수,
      * unknownSends = 결과 불명으로 남은 메시지 수 (보냈는지 모르는 게 있으면 사람이 방을 볼 때까지 안 보냄)
      */
-    fun block(c: Config, a: Applicant, sentToApplicant: Int, sentToday: Int, unknownSends: Int = 0, dailyLimit: Int = MAX_PER_DAY): String? {
-        configProblem(c)?.let { return it }
+    fun check(c: Config, a: Applicant, sentToApplicant: Int, sentToday: Int, unknownSends: Int = 0, dailyLimit: Int = MAX_PER_DAY): Block? {
+        configProblem(c)?.let { return Block(it, BlockKind.PAUSED) }
         val people = ReplyRules.peopleReason(a)
         return when {
-            a.isSample -> "예시 지원자"
-            a.name.trim() != c.testName.trim() -> "테스트 폰 지원자가 아님 — 기존 지원자에겐 안 보냄"
-            a.appliedAt < c.armedAt - ARM_MARGIN_MS -> "시험을 켜기 전에 들어온 지원 — 기존 지원자에겐 안 보냄"
-            a.postingId == null -> "공고를 못 찾은 지원 (보류)"
-            people != null -> people
-            a.status !in HANDLED -> "상태가 '${a.status}' — 앱이 당근으로 보낼 단계가 아님"
-            unknownSends > 0 -> "결과 불명인 메시지 ${unknownSends}개 — 사람이 채팅방을 확인할 때까지 안 보냄"
-            sentToApplicant >= MAX_PER_APPLICANT -> "이 지원자에게 보낸 당근 메시지가 한도 (${MAX_PER_APPLICANT}개)"
-            sentToday >= dailyLimit -> "오늘 앱이 보낸 당근 메시지가 한도 (${dailyLimit}개)"
+            a.isSample -> Block("예시 지원자", BlockKind.NOT_MINE)
+            a.name.trim() != c.testName.trim() -> Block("테스트 폰 지원자가 아님 — 기존 지원자에겐 안 보냄", BlockKind.NOT_MINE)
+            a.appliedAt < c.armedAt - ARM_MARGIN_MS -> Block("시험을 켜기 전에 들어온 지원 — 기존 지원자에겐 안 보냄", BlockKind.NOT_MINE)
+            a.postingId == null -> Block("공고를 못 찾은 지원 (보류)", BlockKind.NOT_MINE)
+            people != null -> Block(people, BlockKind.NOT_MINE)
+            a.status !in HANDLED -> Block("상태가 '${a.status}' — 앱이 당근으로 보낼 단계가 아님", BlockKind.NOT_MINE)
+            unknownSends > 0 -> Block("결과 불명인 메시지 ${unknownSends}개 — 사람이 채팅방을 확인할 때까지 안 보냄", BlockKind.CANT)
+            sentToApplicant >= MAX_PER_APPLICANT -> Block("이 지원자에게 보낸 당근 메시지가 한도 (${MAX_PER_APPLICANT}개)", BlockKind.CANT)
+            sentToday >= dailyLimit -> Block("오늘 앱이 보낸 당근 메시지가 한도 (${dailyLimit}개)", BlockKind.TOMORROW)
             else -> null
         }
     }
+
+    /** check의 이유만 (보내면 안 되는 이유 — 없으면 null) */
+    fun block(c: Config, a: Applicant, sentToApplicant: Int, sentToday: Int, unknownSends: Int = 0, dailyLimit: Int = MAX_PER_DAY): String? =
+        check(c, a, sentToApplicant, sentToday, unknownSends, dailyLimit)?.reason
 }

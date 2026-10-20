@@ -149,6 +149,21 @@ data class Message(
     val isSample: Boolean = false,
 )
 
+/**
+ * 7. 응대 할 일 (지원자마다 한 줄 — 앱이 그 사람 당근 방을 볼 차례). 10/20 재걸: 앱이 시작한 대화는 담당자 확인이 아니면
+ * 번호 받기까지 끝냄 · 보낸 뒤엔 주기적으로 안 보고 그 지원자의 답 알림이 올 때만 → 할 일을 폰에 저장해 두어
+ * 앱·폰이 다시 켜져도 이어서 함. 할 일이 끝나면(보냄·기다림·넘김·끝) 줄을 지움. 정하는 규칙은 reply/ReplyTasks
+ */
+@Entity(tableName = "reply_tasks")
+data class ReplyTask(
+    @PrimaryKey val applicantId: Long,  // 지원자ID (한 사람에 한 줄)
+    val dueAt: Long,                    // 할 때 (이때가 지나면 차례 — 화면이 꺼져 있으면 켜진 뒤)
+    val why: String,                    // 왜: 첫 메시지 / 답이 옴 / 막혀서 다시 / 지금 한 번 확인 / 하루 한도 (ReplyTasks.WHY_…)
+    val tries: Int = 0,                 // 막혀서 다시 한 횟수 (다 쓰면 담당자 확인)
+    val problem: String = "",           // 마지막으로 막힌 이유 (담당자 확인 사유에 씀)
+    val touchedAt: Long,                // 마지막으로 할 일이 생긴 때 (차례가 도는 사이 답이 또 오면 지우지 않으려고)
+)
+
 /** 오류 기록 (티켓 1차 완료 기준 4번) */
 @Entity(tableName = "error_logs")
 data class ErrorLog(

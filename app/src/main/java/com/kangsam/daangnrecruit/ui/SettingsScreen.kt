@@ -44,6 +44,7 @@ import com.kangsam.daangnrecruit.AppDatabase
 import com.kangsam.daangnrecruit.DbBackup
 import com.kangsam.daangnrecruit.DbOpen
 import com.kangsam.daangnrecruit.FeatureSettings
+import com.kangsam.daangnrecruit.reply.LiveReply
 import com.kangsam.daangnrecruit.sync.AccountSync
 import com.kangsam.daangnrecruit.sync.DaangnSync
 import com.kangsam.daangnrecruit.ui.theme.AppIcons
@@ -200,6 +201,7 @@ private fun AllStopCard(refreshTick: Int) {
                 onClick = {
                     FeatureSettings.set(context, FeatureSettings.ALL_STOP, false)
                     stopped = false
+                    LiveReply.resume(context) // 실제 발송 시험: 멈춰 있던 응대 할 일을 이어서
                     notice("전체 멈춤을 풀었어요 — 기능은 각 스위치대로 돌아요")
                 },
                 modifier = Modifier.fillMaxWidth(),

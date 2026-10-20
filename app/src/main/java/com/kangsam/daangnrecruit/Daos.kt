@@ -262,6 +262,30 @@ interface ErrorLogDao {
     fun observeRecent(): Flow<List<ErrorLog>>
 }
 
+/** 응대 할 일 (reply/ReplyTasks가 씀) */
+@Dao
+interface ReplyTaskDao {
+    @Query("SELECT * FROM reply_tasks ORDER BY dueAt, applicantId")
+    suspend fun all(): List<ReplyTask>
+
+    @Query("SELECT * FROM reply_tasks WHERE applicantId = :applicantId")
+    suspend fun get(applicantId: Long): ReplyTask?
+
+    /** 넣거나 바꿈 (한 사람에 한 줄) */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun put(task: ReplyTask)
+
+    @Query("DELETE FROM reply_tasks WHERE applicantId = :applicantId")
+    suspend fun remove(applicantId: Long): Int
+
+    @Query("DELETE FROM reply_tasks")
+    suspend fun clear(): Int
+
+    /** 실제 발송 시험 칸에 보여 줌 */
+    @Query("SELECT * FROM reply_tasks ORDER BY dueAt, applicantId")
+    fun observeAll(): Flow<List<ReplyTask>>
+}
+
 @Dao
 interface CheckDao {
     /** 확인 필요 건수 = 보류·담당자 확인 지원자 + 검사 걸림·결과 불명 게시물 (확인 탭 숫자) */

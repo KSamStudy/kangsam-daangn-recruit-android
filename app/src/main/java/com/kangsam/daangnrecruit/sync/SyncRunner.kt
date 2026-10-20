@@ -82,12 +82,13 @@ class SyncRunner(
             say("공고 '$title' 가져오는 중")
             w.loaded(DaangnPage.MY_PAGE) { p -> DaangnNav.myPostCards(p.nodes).any { it.second == title } }
             w.tap("공고 '$title'") { nodes -> DaangnNav.myPostCards(nodes).firstOrNull { it.second == title }?.first }
-            val s = w.waitFor { MyPostParser.parse(it.screenNodes) != null }
+            // 공고 상세·지원자 목록은 웹 화면이라 늦게 뜰 때가 있음 (10/20 — 12초 넘게)
+            val s = w.waitFor(timeoutMs = DaangnWalker.WEB_WAIT_MS) { MyPostParser.parse(it.screenNodes) != null }
                 ?: throw DaangnWalker.Stop("공고 상세가 안 떠서 멈췄어요 (${w.describe()})")
             save(s)
             if (DaangnNav.applicantsButton(s.nodes) != null) {
                 w.tap("지원자 보기") { DaangnNav.applicantsButton(it) }
-                w.expect(DaangnPage.APPLICANT_LIST)
+                w.expect(DaangnPage.APPLICANT_LIST, DaangnWalker.WEB_WAIT_MS)
                 save(allCards())
                 w.back("지원자 목록")
                 w.expect(DaangnPage.POST_DETAIL)

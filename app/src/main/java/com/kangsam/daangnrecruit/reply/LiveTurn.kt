@@ -32,8 +32,9 @@ import kotlin.random.Random
  *
  * 방 열기 (RoomRoute — 첫 메시지 드라이런과 같은 길): 처음(앱이 보낸 게 없음)은 나의 당근 → 공고 → 지원자 보기 → 그 사람 카드 →
  *   읽은 카드면 아래 '채팅하기', 안 읽은 카드면 지원서 → '채팅하기' (지원서에 없으면 목록으로 돌아와 카드의 '채팅하기').
- *   그다음부터는 채팅 목록 맨 위 화면의 그 사람 방 (안 보이면 지원자 목록 길로)
- * 결과 불명(전송을 눌렀는데 방에 안 보임) → 다시 보내지 않음 · 기록은 '결과 불명' · outcome UNKNOWN (LiveReply가 시험을 끔)
+ *   그다음부터는 채팅 목록 맨 위 화면의 그 사람 방 — 이름으로, 겹칠 때만 동네까지 (LiveNav.pickRow · 안 보이면 지원자 목록 길로)
+ * 결과 불명(전송을 눌렀는데 방에 안 보임) → 다시 보내지 않음 · 기록은 '결과 불명' · outcome UNKNOWN (담당자 확인 · LiveReply가 시험을 끔)
+ * 차례는 할 일(ReplyTasks — 지원 알림 · 그 사람의 답 알림 · '지금 한 번 확인')이 있을 때만 돎. 보낸 뒤 주기적으로 다시 보지 않음 (10/20 재걸)
  */
 class LiveTurn(
     private val driver: ScreenDriver,
@@ -45,24 +46,27 @@ class LiveTurn(
     private val now: () -> Long = { System.currentTimeMillis() },
     private val zone: ZoneId = ZoneId.systemDefault(),
 ) {
-    /** 차례가 어떻게 끝났는지 */
+    /** 차례가 어떻게 끝났는지 — 그 뒤 할 일은 ReplyTasks가 정함 */
     enum class Outcome {
-        SENT,        // 보냄 (방에 보임)
-        WAITING,     // 답 기다림 (안 보냄)
+        SENT,        // 보냄 (방에 보임) → 할 일 지움 (다음은 그 사람의 답 알림)
+        WAITING,     // 답 기다림 (안 보냄) → 할 일 지움
         DONE,        // 마무리까지 보냄 — 더 할 일 없음
         HANDED_OVER, // 사람에게 넘김 (담당자 응대 중·담당자 확인)
         REHEARSED,   // 연습 — 입력창에 쓰고 대조 · 전송 칸 확인 · 지움 (안 보냄)
-        BLOCKED,     // 안 보냄 — 대상·안전 규칙에 걸림 (당근을 안 엶) 또는 보내면 안 되는 방
-        STOPPED,     // 멈춤 — 화면이 예상과 달라 멈춤 (다시 해 볼 수 있음)
-        LEFT,        // 당근을 벗어나 멈춤 — 사람이 홈을 눌렀거나 다른 앱이 뜸 (멈추는 방법이라 다시 안 함)
-        ALARM,       // 멈춤 글자(보안 인증·이용 제한 등)가 보임 — 즉시 중단 (LiveReply가 시험을 끔)
-        UNKNOWN,     // 결과 불명 — 전송을 눌렀는데 방에 안 보임 (다시 안 보냄)
+        NOT_MINE,    // 안 보냄 — 앱이 맡을 사람이 아님 (대상 아님·사람이 맡음·보낼 단계가 아님) · 당근을 안 엶
+        PAUSED,      // 안 돎 — 설정 때문 (시험 꺼짐·전체 멈춤·당근 응대 꺼짐) → 켜지면 이어서
+        TOMORROW,    // 안 보냄 — 오늘 한도 → 다음 날 아침
+        CANT,        // 안 보냄 — 앱이 더 못 함 (발송 전 검사·한 사람 한도·결과 불명이 남음) → 담당자 확인
+        STOPPED,     // 멈춤 — 화면이 예상과 다름·다른 방이 열림 (다시 해 봄)
+        LEFT,        // 멈춤 — 당근을 벗어남 (사람이 홈을 누름·다른 앱이 뜸·화면이 꺼짐) → 다시 해 봄
+        ALARM,       // 멈춤 글자(보안 인증·이용 제한 등)가 보임 — 즉시 중단 (전체 멈춤 · 시험을 끔)
+        UNKNOWN,     // 결과 불명 — 전송을 눌렀는데 방에 안 보임 (다시 안 보냄 · 담당자 확인 · 시험을 끔)
     }
 
     /** 한 일 (지원자 탭 '실제 발송 시험'의 기록) */
     val log = mutableListOf<String>()
 
-    var outcome = Outcome.BLOCKED
+    var outcome = Outcome.STOPPED
         private set
 
     /** 멈춤 글자(보안 인증·이용 제한 등)로 멈췄으면 그 멈춤 — 접근성 서비스가 전체 멈춤 + 계정 상태 기록 (Safety) */
@@ -77,7 +81,7 @@ class LiveTurn(
 
     /** 한 차례 돌고 한 줄 결과를 돌려줌 */
     suspend fun run(): String {
-        val a = db.applicantDao().get(applicantId) ?: return end(Outcome.BLOCKED, "지원자를 못 찾음")
+        val a = db.applicantDao().get(applicantId) ?: return end(Outcome.NOT_MINE, "지원자를 못 찾음")
         val messages = db.messageDao().listFor(a.id)
         val sent = sentByApp(messages)
         val unknownSends = messages.count { it.sender == OURS && it.sendMethod == RESULT_UNKNOWN }
@@ -85,7 +89,9 @@ class LiveTurn(
         // 하루 한도: 이 지원의 공고를 올린 계정(모르면 지금 계정)의 한도와 시험 한도 중 작은 것
         val account = a.standingPostId?.let { db.postDao().getStandingPost(it)?.accountId }?.let { db.accountDao().get(it) }
             ?: AccountSync.current(db)
-        LiveGate.block(config, a, sent.size, today, unknownSends, LiveGate.dailyLimit(account))?.let { return end(Outcome.BLOCKED, "안 보냄 — $it") }
+        LiveGate.check(config, a, sent.size, today, unknownSends, LiveGate.dailyLimit(account))?.let { b ->
+            return end(outcomeOf(b.kind), "안 보냄 — ${b.reason}")
+        }
         note("'${a.name}' — ${config.mode.label} (앱이 보낸 당근 메시지 ${sent.size}개)")
         val result = try {
             visit(a, sent)
@@ -111,7 +117,7 @@ class LiveTurn(
             a.postTitle.isNotBlank() && header.postTitle != a.postTitle -> "다른 공고 방 ('${header.postTitle}')"
             else -> null
         }
-        if (wrong != null) return leave(Outcome.BLOCKED, "안 보냄 — $wrong")
+        if (wrong != null) return leave(Outcome.STOPPED, "안 보냄 — $wrong")
         val items = ChatRoomParser.window(room.nodes)
         // 방에 보이는 메시지를 대화 표에 남김 (지원자 말은 앱 처리 기록대로 — 앱이 응대 중이면 처리 전)
         val (lines, skipped) = ChatRoomParser.resolve(items, zone)
@@ -139,13 +145,20 @@ class LiveTurn(
         return fromApplicants(a)
     }
 
-    /** 채팅 목록 맨 위 화면에서 그 사람 방 (안 읽은 방이어도 엶 — 답하려면 열어야 함). 없으면 null */
+    /**
+     * 채팅 목록 맨 위 화면에서 그 사람 방 (안 읽은 방이어도 엶 — 답하려면 열어야 함). 없으면 null.
+     * 방 줄이 늦게 그려질 수 있어 ROW_WAIT_MS까지 기다림 · 못 찾으면 그 화면을 개발용으로 남김 (live_chat_list)
+     */
     private suspend fun fromChatList(root: Snapshot, a: Applicant): Snapshot? {
         w.tab(root, "채팅", DaangnPage.CHAT_LIST)
         var s = w.loaded(DaangnPage.CHAT_LIST) { DaangnNav.chatRows(it.nodes).isNotEmpty() }
         s = w.scrollToTop(DaangnPage.CHAT_LIST, { DaangnNav.chatListScroller(it) }, { DaangnNav.listRowKeys(it.nodes) }) ?: s
-        if (LiveNav.roomRow(s.nodes, a.name, a.area) == null) {
-            note("채팅 목록 맨 위 화면에 '${a.name}' 방이 없음 → 지원자 목록에서 찾음")
+        val shown = LiveNav.roomRow(s.nodes, a.name, a.area) != null ||
+            w.waitFor(timeoutMs = ROW_WAIT_MS) { it.page == DaangnPage.CHAT_LIST && LiveNav.roomRow(it.nodes, a.name, a.area) != null } != null
+        if (!shown) {
+            w.keepScreen("live_chat_list")
+            val same = DaangnNav.chatRows(driver.current()?.nodes.orEmpty()).count { it.name == a.name }
+            note("채팅 목록 맨 위 화면에서 '${a.name}' 방을 못 고름 (이름이 같은 줄 ${same}개) → 지원자 목록에서 찾음")
             return null
         }
         w.tap("채팅방 '${a.name}'", route.safe(LiveNav.Purpose.ROOM_ROW, a)) { LiveNav.roomRow(it, a.name, a.area) }
@@ -167,7 +180,7 @@ class LiveTurn(
             Conversation.Kind.RETRY -> ReplyPlanner.retryMessage(a, retryNo, recent + sent.map { it.text })
         }
         val problems = ReplyRules.check(text)
-        if (problems.isNotEmpty()) return leave(Outcome.BLOCKED, "안 보냄 — 발송 전 검사에 걸림 (${problems.joinToString(", ")})")
+        if (problems.isNotEmpty()) return leave(Outcome.CANT, "안 보냄 — 발송 전 검사에 걸림 (${problems.joinToString(", ")})")
         note("보낼 문구 (${next.kind.label}): $text")
         val typed = type(text)
         if (config.mode == LiveGate.Mode.REHEARSAL) {
@@ -274,6 +287,13 @@ class LiveTurn(
         return end(o, line)
     }
 
+    private fun outcomeOf(kind: LiveGate.BlockKind): Outcome = when (kind) {
+        LiveGate.BlockKind.PAUSED -> Outcome.PAUSED
+        LiveGate.BlockKind.NOT_MINE -> Outcome.NOT_MINE
+        LiveGate.BlockKind.TOMORROW -> Outcome.TOMORROW
+        LiveGate.BlockKind.CANT -> Outcome.CANT
+    }
+
     private fun end(o: Outcome, line: String): String {
         outcome = o
         return line
@@ -293,6 +313,7 @@ class LiveTurn(
         const val TYPE_WAIT_MS = 4_000L          // 입력창에 글자가 보이기를 기다리는 시간
         const val SEND_CONFIRM_MS = 10_000L      // 전송 뒤 방에 우리 말풍선이 보이기를 기다리는 시간
         const val CLEAR_PAUSE_MS = 600L
+        const val ROW_WAIT_MS = 5_000L           // 채팅 목록 맨 위 화면에 그 사람 방 줄이 그려지기를 더 기다리는 시간
         private const val DAANGN = "당근"
         private const val OURS = "우리"
         private const val APPLICANT = "지원자"

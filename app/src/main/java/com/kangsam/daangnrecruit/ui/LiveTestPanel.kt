@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import com.kangsam.daangnrecruit.AppDatabase
 import com.kangsam.daangnrecruit.Applicant
 import com.kangsam.daangnrecruit.reply.LiveGate
 import com.kangsam.daangnrecruit.reply.LiveReply
@@ -37,9 +38,9 @@ import kotlinx.coroutines.delay
 
 /**
  * 지원자 탭의 '실제 발송 시험 (테스트 폰에만)' 칸 — 개발 중에만 있는 것 (화면 설계). 10/18 재걸: 테스트 폰 계정으로
- * 첫 메시지 → 답 → 마무리를 한 번에 해 보고 끔. 테스트 폰 당근 닉네임 · 끔·연습·실제 발송 · 시험 대상 · 지금 하는 일 ·
- * '지금 한 번 확인' · 최근 결과. 접어 두면 한 줄.
- * 언제 돌지는 reply/LiveReply, 보내도 되는지는 reply/LiveGate, 설정 값은 reply/LiveSettings
+ * 첫 메시지 → 답 → 마무리를 한 번에 해 보고 끔. 테스트 폰 당근 닉네임 · 끔·연습·실제 발송 · 시험 대상 · 할 일(10/20) ·
+ * 지금 하는 일 · '지금 한 번 확인' · 최근 결과. 접어 두면 한 줄.
+ * 언제 돌지는 reply/LiveReply, 할 일 규칙은 reply/ReplyTasks, 보내도 되는지는 reply/LiveGate, 설정 값은 reply/LiveSettings
  */
 @Composable
 fun LiveTestPanel(daangnOn: Boolean, applicants: List<Applicant>, modifier: Modifier = Modifier) {
@@ -53,6 +54,8 @@ fun LiveTestPanel(daangnOn: Boolean, applicants: List<Applicant>, modifier: Modi
     var results by remember { mutableStateOf(LiveSettings.results(context)) }
     var lastLog by remember { mutableStateOf(LiveSettings.lastLog(context)) }
     val status by LiveReply.status.collectAsState()
+    val db = remember { AppDatabase.get(context) }
+    val tasks by remember { db.replyTaskDao().observeAll() }.collectAsState(initial = emptyList())
 
     // 하는 일이 바뀌면(차례가 끝나면) 결과·모드를 다시 읽음 (결과 불명이면 LiveReply가 '끔'으로 바꿈)
     LaunchedEffect(status) {
@@ -80,10 +83,12 @@ fun LiveTestPanel(daangnOn: Boolean, applicants: List<Applicant>, modifier: Modi
     }
 
     fun change(m: LiveGate.Mode) {
+        val before = LiveSettings.config(context)
         LiveSettings.setMode(context, m)
         mode = m
         armedAt = LiveSettings.armedAt(context)
-        if (m == LiveGate.Mode.OFF) LiveReply.cancelAll()
+        // 끄면 할 일을 모두 지우고, 앱이 시작했는데 번호를 못 받은 대화는 담당자 확인으로 (끝은 연락처 확보 또는 담당자 확인 — 10/20)
+        if (m == LiveGate.Mode.OFF) LiveReply.turnedOff(context, before, "시험 칸에서 끔")
         LiveReply.settleLater(context) // 맡은 지원이 바뀜 → 앱이 응대하지 않게 된 지원자의 처리 전 메시지는 넘김으로
         // 실제 발송으로 바꾸면 기다리던 시험 대상(연습한 지원 등)에게 바로 이어서 (대상이 없으면 안내만)
         if (m == LiveGate.Mode.LIVE) LiveReply.checkNow(context)
@@ -120,7 +125,9 @@ fun LiveTestPanel(daangnOn: Boolean, applicants: List<Applicant>, modifier: Modi
                 Text(
                     "테스트 폰 당근 닉네임과 이름이 같고 시험을 켠 뒤(앞 30분 포함) 들어온 지원에만 보내요. 기존 지원자에겐 안 보내요. " +
                         "개발 중엔 '당근 응대'를 켜도 이 시험 대상에게만 보내고, '문자 응대'는 값만 저장돼요.\n" +
-                        "연습: 입력창에 쓰고 대조한 뒤 지움 (전송 안 함) · 실제 발송: 첫 메시지 → 번호가 틀리면 다시 요청(2번까지) → 번호를 받으면 마무리. 끝나면 '끔'.",
+                        "연습: 입력창에 쓰고 대조한 뒤 지움 (전송 안 함) · 실제 발송: 첫 메시지 → 번호가 틀리면 다시 요청(2번까지) → 번호를 받으면 마무리. 끝나면 '끔'.\n" +
+                        "보낸 뒤엔 주기적으로 안 보고, 그 지원자의 답 알림이 오면 그때 방을 봐요. 막히면 1·3·10·30분 뒤 다시, 그래도 안 되면 담당자 확인 + 폰 알림. " +
+                        "끄면 번호를 못 받은 대화는 담당자 확인으로 넘겨요.",
                     style = AppText.Caption,
                     color = Palette.Muted,
                 )
@@ -158,6 +165,17 @@ fun LiveTestPanel(daangnOn: Boolean, applicants: List<Applicant>, modifier: Modi
                 Text(
                     if (targets.isEmpty()) "시험 대상: 없음 (테스트 폰으로 지원하면 알림으로 들어와요)"
                     else "시험 대상: " + targets.joinToString(", ") { "${it.name} (${it.status})" },
+                    style = AppText.Small,
+                    color = Palette.Ink,
+                )
+                // 할 일 (폰에 저장 — 앱·폰이 다시 켜져도 이어서): 누구 · 왜 · 언제 · 막힌 횟수
+                val names = applicants.associate { it.id to it.name }
+                Text(
+                    if (tasks.isEmpty()) "할 일: 없음 — 시험 대상의 지원 알림이나 답 알림이 오면 생겨요"
+                    else "할 일: " + tasks.joinToString(" · ") { t ->
+                        "${names[t.applicantId] ?: "지원자 ${t.applicantId}"} — ${t.why} ${formatClock(t.dueAt)}" +
+                            if (t.tries > 0) " (막힘 ${t.tries}번)" else ""
+                    },
                     style = AppText.Small,
                     color = Palette.Ink,
                 )

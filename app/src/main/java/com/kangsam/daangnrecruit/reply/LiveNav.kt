@@ -1,5 +1,6 @@
 package com.kangsam.daangnrecruit.reply
 
+import com.kangsam.daangnrecruit.sync.ChatRow
 import com.kangsam.daangnrecruit.sync.DaangnNav
 import com.kangsam.daangnrecruit.sync.UiNode
 import com.kangsam.daangnrecruit.sync.UiTree
@@ -12,7 +13,7 @@ import com.kangsam.daangnrecruit.sync.UiTree
  * - 지원자 목록(웹뷰 — 10/15 덤프): 그 사람 카드(이름이 같은 카드 하나 — 누르면 지원서), 읽은 카드 아래 '채팅하기' 버튼
  * - 지원서 (안 읽은 카드를 누르면 열림 — 아직 덤프 없음, 앱이 열 때 live_application·dryrun_application으로 남김):
  *   글자가 '채팅하기'인 누를 칸이 하나일 때만
- * - 채팅 목록: 그 사람 방 줄 (실제 발송 시험은 안 읽은 방이어도 엶 — 답하려면 열어야 함)
+ * - 채팅 목록: 그 사람 방 줄 — 이름으로, 이름이 겹칠 때만 동네까지 (pickRow). 실제 발송 시험은 안 읽은 방이어도 엶 (답하려면 열어야 함)
  * - 채팅방: 입력창(EditText), 전송('메세지 전송' — 10/15 덤프)
  */
 object LiveNav {
@@ -54,9 +55,20 @@ object LiveNav {
         return inner.singleOrNull()
     }
 
-    /** 채팅 목록에서 그 사람 방 줄 (이름 + 동네가 맞는 줄이 하나일 때만 — 동네를 모르면 이름만) */
-    fun roomRow(nodes: List<UiNode>, name: String, area: String): Int? =
-        DaangnNav.chatRows(nodes).filter { it.name == name && (area.isBlank() || it.area == area) }.singleOrNull()?.index
+    /** 채팅 목록에서 그 사람 방 줄 (pickRow) */
+    fun roomRow(nodes: List<UiNode>, name: String, area: String): Int? = pickRow(DaangnNav.chatRows(nodes), name, area)?.index
+
+    /**
+     * 방 줄 고르기: 이름이 같은 줄이 하나면 그 줄, 여럿이면 동네까지 같은 줄이 하나일 때만 (못 고르면 null).
+     * 동네는 이름이 겹칠 때만 씀 — 같은 사람도 채팅 목록의 동네가 그때그때 바뀌어 보임 (10/20 시험: 송도동 ↔ 용현동,
+     * 이름 + 동네로만 찾다가 방을 두 번 못 찾음). 다른 사람 방을 열어도 보내기 전에 방 위쪽 이름·공고명으로 한 번 더 봄
+     */
+    fun pickRow(rows: List<ChatRow>, name: String, area: String): ChatRow? {
+        val named = rows.filter { it.name == name }
+        if (named.size <= 1) return named.singleOrNull()
+        if (area.isBlank()) return null
+        return named.filter { it.area == area }.singleOrNull()
+    }
 
     /** 채팅방 입력창 */
     fun input(nodes: List<UiNode>): Int? = DaangnNav.chatInput(nodes)

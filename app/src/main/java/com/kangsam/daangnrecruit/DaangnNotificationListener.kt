@@ -26,7 +26,8 @@ import java.io.File
  * '전체 멈춤'이면 아무것도 안 함 (10/19 — 전에는 개발용 '알림 기록' 스위치로 지원 감지까지 같이 멈춤, 점검 P0-1).
  * (3) 지원자가 보낸 채팅 메시지 알림이면 그 지원자의 대화에 남김 (당근 가져오기 C3 — 그 기능이 켜져 있을 때만, 10/18).
  * (4) 새로 남긴 메시지에 휴대폰 번호가 있으면 연락처를 저장 (지원자 응대 B3 — reply/ContactFlow, 10/18).
- * (5) 실제 발송 시험: 시험 대상 지원이면 첫 메시지 차례를 잡고, 당근 알림이 오면 답을 기다리는 시험 대상을 다시 보게 함 (reply/LiveReply, 10/18).
+ * (5) 실제 발송 시험: 시험 대상 지원이면 첫 메시지 할 일을 잡고, 시험 대상이 보낸 채팅 알림이면 그 사람 방을 볼 할 일을 잡음
+ *     (reply/LiveReply — 10/20 재걸: 보낸 뒤엔 주기적으로 안 보고 그 지원자의 답 알림이 올 때만. 전에는 당근 알림이면 다).
  * 알림을 지우거나 누르는 동작은 하지 않는다 (읽기 전용). 리스너가 당근·문자로 보내는 일은 없음 (실제 발송 시험은 접근성 서비스가 함).
  * 오류가 나도 서비스가 멈추지 않게 잡아서 오류 기록(DB)에 남긴다.
  */
@@ -63,9 +64,21 @@ class DaangnNotificationListener : NotificationListenerService() {
         // (3) 지원자가 보낸 채팅 메시지면 그 지원자 대화에 남김 (당근 가져오기가 켜져 있고 전체 멈춤이 아닐 때만)
         if (DaangnSync.canRun(this)) saveChat(sbn)
 
-        // (5) 실제 발송 시험: 당근 알림이 오면 답을 기다리는 시험 대상의 방을 다시 봄
-        //     (지원자 채팅 알림 모양을 아직 몰라 당근 알림이면 다 — 대상이 없으면 LiveReply가 아무것도 안 함)
-        if (sbn.packageName == DAANGN) LiveReply.onNotice(applicationContext)
+        // (5) 실제 발송 시험: 시험 대상이 보낸 채팅 알림이면 그 사람 방을 볼 할 일 (그 지원자의 답이 왔을 때만 — 10/20 재걸).
+        //     '당근 가져오기' 스위치와 상관없이 (대화 기록은 (3)이 가져오기가 켜져 있을 때만 남김)
+        if (sbn.packageName == DAANGN) liveChat(sbn)
+    }
+
+    /**
+     * (5) 지원자 채팅 알림의 보낸 사람 이름(당근 닉네임)을 실제 발송 시험에 넘김 — 시험 대상이면 그 사람 방을 볼 할 일.
+     * 10/20 테스트 폰 시험에서 본 모양: 채널 chat44 · 그룹 chat · 제목과 메시지 목록의 보낸 사람 = 지원자 닉네임
+     * (당근알바 지원 알림 · 당근 공식 알림은 ChatNotify.messages가 뺌)
+     */
+    private fun liveChat(sbn: StatusBarNotification) {
+        val senders = runCatching { ChatNotify.messages(toNotice(sbn)).map { it.sender.trim() }.distinct() }
+            .onFailure { saveError("실제 발송 시험 — 답 알림 읽기", it) }
+            .getOrDefault(emptyList())
+        if (senders.isNotEmpty()) LiveReply.onChat(applicationContext, senders)
     }
 
     /** (2) 지원 알림 → 지원자 한 줄 (공고명으로 게시물을 붙임) */

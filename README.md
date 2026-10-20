@@ -43,7 +43,7 @@ CODE_MAP.md         파일마다 하는 일과 지키는 것
 | 패키지 | `com.kangsam.daangnrecruit` (앱 이름 Kangsam Daangn Recruit) |
 | 안드로이드 | minSdk 26 · targetSdk 37 |
 | 언어·라이브러리 | Kotlin 2.2.10 · AGP 9.4.1 · Compose BOM 2026.02.01 (Material3) · Room 2.8.5 (KSP) |
-| DB | 폰 안 `recruit.db` (표 구조 버전 4). 업데이트 뒤 처음 열기 전과 하루 한 번 폰 안 사본 (`files/db_backup`, 최근 7개) |
+| DB | 폰 안 `recruit.db` (표 구조 버전 5). 업데이트 뒤 처음 열기 전과 하루 한 번 폰 안 사본 (`files/db_backup`, 최근 7개) |
 
 ## 폰에서 켜야 하는 것 (처음 한 번)
 
@@ -67,7 +67,7 @@ CODE_MAP.md         파일마다 하는 일과 지키는 것
 
 ## 시험
 
-판단하는 코드(문구·검사·화면 읽기·길 찾기·기록 맞추기)는 안드로이드 없이 도는 순수 코드라서 폰 없이 시험해요. 덤프 모양을 줄인 가짜 당근 화면과 메모리 DB를 써요 (10/20 기준 436개). 이 시험 틀은 아직 리포 밖에 있어요 (맥 `build/claude_tmp/impl_1020/harness`). `app/src/test`·`app/src/androidTest`의 Example 파일은 Android Studio가 만든 그대로예요.
+판단하는 코드(문구·검사·화면 읽기·길 찾기·기록 맞추기·응대 할 일)는 안드로이드 없이 도는 순수 코드라서 폰 없이 시험해요. 덤프 모양을 줄인 가짜 당근 화면과 메모리 DB를 써요 (10/20 기준 584개). 이 시험 틀은 아직 리포 밖에 있어요 (맥 `build/claude_tmp/impl_1020/harness`). `app/src/test`·`app/src/androidTest`의 Example 파일은 Android Studio가 만든 그대로예요.
 
 ## 문서
 

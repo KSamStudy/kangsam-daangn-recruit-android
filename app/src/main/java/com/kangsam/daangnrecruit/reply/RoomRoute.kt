@@ -37,16 +37,20 @@ class RoomRoute(
         val unread: Boolean get() = LiveNav.isUnreadCard(list.nodes, index)
     }
 
-    /** 나의 당근 → 공고 → 지원자 보기 → 그 사람 카드. 아래 탭이 있는 화면에서 시작. 카드를 못 찾으면 화면을 남기고 멈춤 */
+    /**
+     * 나의 당근 → 공고 → 지원자 보기 → 그 사람 카드. 아래 탭이 있는 화면에서 시작. 카드를 못 찾으면 화면을 남기고 멈춤.
+     * 공고 상세·지원자 목록은 웹 화면이라 늦게 뜰 때가 있어 WEB_WAIT_MS까지 기다림 (10/20 시험: 12초 넘게 걸려 멈춘 적 있음)
+     */
     suspend fun applicantCard(a: Applicant): Card {
         val here = w.driver.current() ?: throw DaangnWalker.Stop("당근 화면을 벗어나서 멈췄어요", left = true)
         w.tab(here, "나의 당근", DaangnPage.MY_PAGE)
         w.loaded(DaangnPage.MY_PAGE) { p -> DaangnNav.myPostCards(p.nodes).any { it.second == a.postTitle } }
         w.tap("공고 '${a.postTitle}'") { nodes -> DaangnNav.myPostCards(nodes).firstOrNull { it.second == a.postTitle }?.first }
-        w.waitFor { MyPostParser.parse(it.screenNodes) != null } ?: throw DaangnWalker.Stop("공고 상세가 안 떠서 멈췄어요")
+        w.waitFor(timeoutMs = DaangnWalker.WEB_WAIT_MS) { MyPostParser.parse(it.screenNodes) != null }
+            ?: throw DaangnWalker.Stop("공고 상세가 안 떠서 멈췄어요 (${DaangnWalker.WEB_WAIT_MS / 1000}초)")
         w.tap("지원자 보기") { DaangnNav.applicantsButton(it) }
-        w.expect(DaangnPage.APPLICANT_LIST)
-        val list = w.loaded(DaangnPage.APPLICANT_LIST) { LiveNav.applicantCard(it.nodes, a.name) != null }
+        w.expect(DaangnPage.APPLICANT_LIST, DaangnWalker.WEB_WAIT_MS)
+        val list = w.loaded(DaangnPage.APPLICANT_LIST, DaangnWalker.WEB_WAIT_MS) { LiveNav.applicantCard(it.nodes, a.name) != null }
         val card = LiveNav.applicantCard(list.nodes, a.name)
         if (card == null) {
             w.keepScreen("${keepPrefix}_applicants", list)
@@ -59,10 +63,10 @@ class RoomRoute(
     suspend fun roomFromCard(a: Applicant, card: Card): Snapshot {
         if (LiveNav.cardChatButton(card.list.nodes, card.index) != null) return cardChat(a)
 
-        // 안 읽은 카드 → 지원서 → '채팅하기' (지원서 화면은 아직 덤프가 없어서 개발용으로 남김)
+        // 안 읽은 카드 → 지원서(웹 화면) → '채팅하기' (지원서 화면은 개발용으로 남김)
         w.tap("'${a.name}' 지원서", safe(LiveNav.Purpose.CARD, a)) { LiveNav.applicantCard(it, a.name) }
         markOpened(a)
-        val app = w.waitFor(timeoutMs = LOAD_MS) { s ->
+        val app = w.waitFor(timeoutMs = DaangnWalker.WEB_WAIT_MS) { s ->
             s.page != DaangnPage.APPLICANT_LIST && s.nodes.any { it.text.contains(a.name) } && LiveNav.chatButton(s.nodes) != null
         }
         w.keepScreen("${keepPrefix}_application", app)
@@ -112,7 +116,6 @@ class RoomRoute(
     }
 
     companion object {
-        const val LOAD_MS = 8_000L    // 지원서가 뜨기를 기다리는 시간
         const val BUBBLES_MS = 2_500L // 채팅방 위쪽·입력창이 뜬 뒤 말풍선을 더 기다리는 시간 (새 방이면 이만큼 기다리고 빈 방으로 봄)
     }
 }

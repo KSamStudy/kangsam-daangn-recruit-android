@@ -97,26 +97,30 @@ class FirstMessageDryRun(
             w.keepScreen("chat_list", s)
             return Visit(false, "채팅 목록에서 방 줄을 못 찾음")
         }
-        // 목록 맨 위부터 아래로 넘기며 이 지원자 방을 찾음 (이름 + 동네). 이 지원자가 지원하기 전 방만 남으면 그만
+        // 목록 맨 위부터 아래로 넘기며 이 지원자 방을 찾음 (이름 — 이름이 겹칠 때만 동네까지, LiveNav.pickRow).
+        // 이 지원자가 지원하기 전 방만 남으면 그만
         s = w.scrollToTop(DaangnPage.CHAT_LIST, { DaangnNav.chatListScroller(it) }, ::listKeys) ?: s
         val now = System.currentTimeMillis()
         val cutoff = a.appliedAt - DaangnNav.ROOM_AGE_MARGIN_MS
         var row: ChatRow? = null
         for (page in 0 until MAX_LIST_PAGES) {
             val here = DaangnNav.chatRows(s.nodes)
-            val same = here.filter { it.name == a.name && (a.area.isBlank() || it.area == a.area) }
-            if (same.size > 1) return Visit(false, "목록에 이름·동네가 같은 방이 ${same.size}개라 어느 방인지 모름")
-            row = same.firstOrNull()
+            row = LiveNav.pickRow(here, a.name, a.area)
+            val named = here.count { it.name == a.name }
+            if (row == null && named > 1) {
+                w.keepScreen("dryrun_chat_list", s)
+                return Visit(false, "목록에 이름이 같은 방이 ${named}개인데 동네로도 못 가려 어느 방인지 모름")
+            }
             if (row != null || DaangnNav.allOlderThan(here, cutoff, now)) break
             s = w.scrollDown(DaangnPage.CHAT_LIST, { DaangnNav.chatListScroller(it) }, ::listKeys) ?: break
         }
         if (row == null) {
-            return Visit(false, "채팅 목록에 이 지원자 방이 없음 — 앱엔 당근 대화가 있는데 목록에서 못 찾음 (이름·동네가 당근과 다를 수 있음)")
+            w.keepScreen("dryrun_chat_list", s)
+            return Visit(false, "채팅 목록에 이 지원자 방이 없음 — 앱엔 당근 대화가 있는데 목록에서 못 찾음 (이름이 당근과 다를 수 있음)")
         }
         if (row.unread) return Visit(false, "안 읽은 메시지가 있는 방이라 열지 않음 (열면 상대에게 읽음으로 보임)")
 
-        val key = "${row.name}|${row.area}"
-        w.tap("채팅방 '${row.name}'") { nodes -> DaangnNav.chatRows(nodes).firstOrNull { "${it.name}|${it.area}" == key }?.index }
+        w.tap("채팅방 '${row.name}'", route.safe(LiveNav.Purpose.ROOM_ROW, a)) { nodes -> LiveNav.roomRow(nodes, a.name, a.area) }
         w.expect(DaangnPage.CHAT_ROOM)
         val visit = look(a, text, route.roomLoaded())
         w.back("채팅방")

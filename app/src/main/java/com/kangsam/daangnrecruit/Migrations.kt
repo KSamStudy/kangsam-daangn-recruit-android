@@ -22,6 +22,17 @@ object Migrations {
         }
     }
 
+    /** 4 → 5 (10/20): 응대 할 일 표 (reply_tasks — 실제 발송 시험이 다음에 그 사람 방을 볼 차례를 저장). 옛 기록은 그대로 */
+    val FROM_4_TO_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `reply_tasks` (`applicantId` INTEGER NOT NULL, `dueAt` INTEGER NOT NULL, " +
+                    "`why` TEXT NOT NULL, `tries` INTEGER NOT NULL, `problem` TEXT NOT NULL, `touchedAt` INTEGER NOT NULL, " +
+                    "PRIMARY KEY(`applicantId`))"
+            )
+        }
+    }
+
     /** 앱이 아는 옮기기 전부 (AppDatabase가 Room에 넘김) */
-    val ALL: Array<Migration> = arrayOf(FROM_3_TO_4)
+    val ALL: Array<Migration> = arrayOf(FROM_3_TO_4, FROM_4_TO_5)
 }

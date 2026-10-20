@@ -172,12 +172,16 @@ class DaangnWalker(
         return expect(page)
     }
 
-    /** 화면 틀은 먼저 뜨고 내용(공고 카드·채팅 줄 등)은 뒤에 뜨는 화면: 내용이 뜰 때까지 기다림. 끝내 안 뜨면 그때 화면 */
-    suspend fun loaded(page: DaangnPage, ready: (Snapshot) -> Boolean): Snapshot =
-        waitFor(timeoutMs = LOAD_MS) { it.page == page && ready(it) } ?: expect(page)
+    /**
+     * 화면 틀은 먼저 뜨고 내용(공고 카드·채팅 줄 등)은 뒤에 뜨는 화면: 내용이 뜰 때까지 기다림 (timeoutMs — 웹 화면은 WEB_WAIT_MS).
+     * 끝내 안 뜨면 그때 화면
+     */
+    suspend fun loaded(page: DaangnPage, timeoutMs: Long = LOAD_MS, ready: (Snapshot) -> Boolean): Snapshot =
+        waitFor(timeoutMs = timeoutMs) { it.page == page && ready(it) } ?: expect(page)
 
-    suspend fun expect(page: DaangnPage): Snapshot =
-        waitFor { it.page == page } ?: throw Stop("'${page.label}' 화면이 안 떠서 멈췄어요 (지금: ${describe()})")
+    /** 그 화면이 뜰 때까지 기다림 (timeoutMs — 웹 화면은 WEB_WAIT_MS). 안 뜨면 멈춤 */
+    suspend fun expect(page: DaangnPage, timeoutMs: Long = WAIT_MS): Snapshot =
+        waitFor(timeoutMs = timeoutMs) { it.page == page } ?: throw Stop("'${page.label}' 화면이 안 떠서 멈췄어요 (지금: ${describe()})")
 
     /**
      * 조건에 맞는 당근 화면이 뜰 때까지 기다림. 그동안 멈춤 글자가 보이면 멈춤,
@@ -224,6 +228,9 @@ class DaangnWalker(
     companion object {
         const val MAX_CLICKS = 80     // 한 번에 누르는 횟수 한도
         const val WAIT_MS = 12_000L   // 화면이 뜨기를 기다리는 시간
+        // 당근 웹 화면(공고 상세·지원자 목록·지원서)이 뜨기를 기다리는 시간 — 10/20 실제 발송 시험: 빙글빙글(로딩)만 12초 넘게 보여
+        // 두 번 멈춤 (공고 상세 2번 · 지원자 목록 1번)
+        const val WEB_WAIT_MS = 30_000L
         const val SCROLL_WAIT_MS = 2_500L // 스크롤 뒤 화면이 바뀌기를 기다리는 시간 (안 바뀌면 끝)
         const val SETTLE_MS = 3_000L      // 스크롤로 움직이기 시작한 화면이 멈추기를 기다리는 시간
         const val SETTLE_POLL_MS = 300L   // 멈췄는지 보는 간격 (두 번 연달아 같으면 멈춘 것)

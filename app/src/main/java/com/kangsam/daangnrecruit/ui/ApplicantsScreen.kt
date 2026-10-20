@@ -47,6 +47,7 @@ import com.kangsam.daangnrecruit.ApplicantStatus
 import com.kangsam.daangnrecruit.ApplicantView
 import com.kangsam.daangnrecruit.FeatureSettings
 import com.kangsam.daangnrecruit.HoldReason
+import com.kangsam.daangnrecruit.reply.LiveReply
 import com.kangsam.daangnrecruit.reply.MessageCare
 import com.kangsam.daangnrecruit.reply.ReplyScope
 import com.kangsam.daangnrecruit.ui.theme.AppText
@@ -105,6 +106,7 @@ fun ApplicantsScreen(onOpenApplicant: (Long) -> Unit, onGoCheck: () -> Unit, mod
                 SwitchRow("당근 응대", "첫 메시지 · 번호 받기", daangnOn, onChange = {
                     daangnOn = it
                     FeatureSettings.set(context, FeatureSettings.DAANGN_REPLY, it)
+                    if (it) LiveReply.resume(context) // 실제 발송 시험: 꺼져 있던 사이 남은 응대 할 일을 이어서
                 })
                 HLine()
                 SwitchRow("문자 응대", "인적사항·가능 시간 받기 · 넘기기", smsOn, onChange = {

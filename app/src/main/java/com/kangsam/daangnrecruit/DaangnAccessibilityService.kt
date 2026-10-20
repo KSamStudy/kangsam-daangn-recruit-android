@@ -1,7 +1,11 @@
 package com.kangsam.daangnrecruit
 
 import android.accessibilityservice.AccessibilityService
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
@@ -9,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
@@ -48,6 +53,8 @@ import kotlinx.coroutines.launch
  * - 설정의 '당근에서 가져오기': SyncRunner가 이 손으로 당근을 돌며 가져옴 (도는 동안 화면 아래에 '가져오는 중' 띠, 화면 안 꺼짐)
  * - 지원자 상세의 '첫 메시지 드라이런': FirstMessageDryRun(reply 폴더)이 그 지원자 채팅방까지 가서 확인만 함 (입력·전송 없음)
  * - 지원자 탭의 '실제 발송 시험': LiveTurn(reply 폴더)이 테스트 폰 지원자 한 명의 채팅방에서 입력·전송까지 (언제 돌지는 LiveReply — 10/18)
+ *   서비스가 켜질 때(폰·앱이 다시 켜짐 · 접근성을 다시 켬) 저장된 응대 할 일을 이어서 하게 하고(LiveReply.onServiceReady),
+ *   화면이 켜지고 잠금이 풀리면 10초 뒤 기다리던 할 일을 이어서 하게 함 (onScreenOn — 10/20, 화면이 꺼져 있으면 당근을 못 다뤄서)
  * - 채팅방에서 지난 대화를 가져온 뒤: 연락처가 빈 지원자의 번호를 지난 대화에서 채움 (ContactFlow.fillFromHistory — 상태는 그대로)
  * 한 번에 하나만 돎 (driving)
  * 당근 앱 화면만 받음(packageNames). 폰 설정 → 접근성에서 켜야 동작.
@@ -68,27 +75,71 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
     var driving: Boolean = false
         private set
 
+    // 화면이 켜지고 잠금이 풀림 → 잠깐 뒤 기다리던 응대 할 일을 이어서 (사람이 폰을 내려놓을 틈 — SCREEN_GRACE_MS)
+    private val screenLater = Runnable { if (screenReady()) LiveReply.onScreenOn(applicationContext) }
+    private var screenWatching = false
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (!screenReady()) return
+            handler.removeCallbacks(screenLater)
+            handler.postDelayed(screenLater, SCREEN_GRACE_MS)
+        }
+    }
+
     override fun onServiceConnected() {
         instance = this
         Log.i(TAG, "접근성 서비스 연결됨")
+        watchScreen()
+        AppAlerts.clearAccessibilityNeeded(applicationContext)
+        LiveReply.onServiceReady(applicationContext) // 폰·앱이 다시 켜졌거나 접근성을 다시 켬 → 저장된 할 일을 이어서
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
         instance = null
         hideBanner()
+        unwatchScreen()
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
         instance = null
         hideBanner()
+        unwatchScreen()
         handler.removeCallbacks(readLater)
+        handler.removeCallbacks(screenLater)
         ioScope.cancel()
         mainScope.cancel()
         super.onDestroy()
     }
 
     override fun onInterrupt() {}
+
+    /** 앱이 당근을 다룰 수 있는 화면인지: 화면이 켜져 있고 잠금이 풀려 있음 (꺼져 있거나 잠겨 있으면 당근 화면이 안 그려져 누를 게 없음) */
+    fun screenReady(): Boolean {
+        val power = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        return power?.isInteractive == true && keyguard?.isKeyguardLocked != true
+    }
+
+    /** 화면 켜짐·잠금 풀림 알림을 받기 시작 (서비스가 켜져 있는 동안만) */
+    private fun watchScreen() {
+        if (screenWatching) return
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_USER_PRESENT) // 잠금이 풀림
+            addAction(Intent.ACTION_SCREEN_ON)    // 화면이 켜짐 (잠금이 없으면 이것으로)
+        }
+        runCatching {
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            else registerReceiver(screenReceiver, filter)
+            screenWatching = true
+        }.onFailure { saveError("화면 켜짐 알림 받기", it) }
+    }
+
+    private fun unwatchScreen() {
+        if (!screenWatching) return
+        screenWatching = false
+        runCatching { unregisterReceiver(screenReceiver) }
+    }
 
     // ---------- 사람이 연 화면 읽기
 
@@ -423,6 +474,7 @@ class DaangnAccessibilityService : AccessibilityService(), ScreenDriver {
         private const val DAANGN = "com.towneers.www"
         private const val READ_DELAY_MS = 1_000L
         private const val SAME_SCREEN_MS = 60_000L
+        private const val SCREEN_GRACE_MS = 10_000L // 잠금이 풀린 뒤 응대 할 일을 이어서 하기 전 기다리는 시간 (사람이 폰을 내려놓을 틈)
         private const val MAX_DEPTH = 100
         private const val MAX_NODES = 5_000
         private const val SYNC_BANNER = "당근 가져오는 중 — 폰을 만지지 마세요 (멈추려면 홈 버튼)"
